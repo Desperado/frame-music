@@ -1344,9 +1344,7 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
     assert.equal(phoneSaves, 1); assert.equal(records.size, 1);
     assert.equal(storage.get('mosaicast-mode'), 'companion');
     assert.equal(app.nodes.get('overlay').hidden, true);
-    assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
-    app.nodes.get('refresh').click(); await app.settle();
-    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED', 'new QR setup completes its read-only refresh automatically');
     assert.ok([...records.values()].some(raw => JSON.parse(raw).record.key === phoneRecord.key));
     const restarted = await launch(tizen, { storage, companionFetch });
     assert.equal(restarted.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
@@ -1365,4 +1363,23 @@ test('pairing QR is discarded on backgrounding and closing', async () => {
   app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
   app.nodes.get('refresh-qr').click(); app.nodes.get('close-dialog').click();
   assert.equal(app.nodes.get('overlay').hidden, true);
+});
+
+
+test('QR setup explains unavailable discovery and slow phone discovery without a false success', async () => {
+  const denied = await launch();
+  denied.nodes.get('settings').click(); denied.nodes.get('pair-companion').click(); await denied.settle();
+  assert.match(denied.nodes.get('qr-status').textContent, /Could not search/);
+  assert.equal(denied.nodes.get('pairing-qr').hidden, false);
+  denied.nodes.get('close-dialog').click();
+  const slow = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
+    discoveryFetch: async () => ({ ok: true, headers: { get: () => null }, text: async () => '{}' }) });
+  slow.nodes.get('settings').click(); slow.nodes.get('pair-companion').click();
+  for (let i = 0; i < 8; i++) await slow.settle();
+  slow.advance(31000);
+  for (let i = 0; i < 8; i++) await slow.settle();
+  assert.match(slow.nodes.get('qr-status').textContent, /Still looking/);
+  assert.equal(slow.nodes.get('overlay').hidden, false);
+  assert.equal(slow.nodes.get('retry-qr').hidden, true);
+  slow.nodes.get('close-dialog').click();
 });

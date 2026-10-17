@@ -462,37 +462,41 @@ function manualPairing(visible) {
 async function finishQRPairing(url, invitation, attempt) {
   client?.setActive?.(false);
   if (client?.pending) throw new Error('Wait for the current Yamaha operation to finish.');
-  $('retry-qr').hidden = false;
+  $('retry-qr').hidden = true;
+  $('pairing-qr').hidden = true;
+  $('qr-status').textContent = pairingCopy.tvQRConnecting;
   if (!pendingPair) {
     const pending = await pairFrame(url, invitation);
     if (attempt !== pairingAttempt || $('overlay').hidden) return;
     pendingPair = { ...pending, url };
   }
-  $('retry-qr').hidden = false;
   rememberPairingMode();
   const pairing = await pendingPair.confirm();
   // A closed dialog must still remember a completed save, without changing its screen.
   saveMode('companion');
   if (attempt !== pairingAttempt || $('overlay').hidden) return;
   $('qr-status').textContent = pairingCopy.tvQRSaved;
-  await connect(pairing.receiver, false, pairing);
+  await connect(pairing.receiver, false, pairing, true);
 }
 async function searchQRPhone(attempt) {
   if (attempt !== pairingAttempt || !qrInvitation || $('overlay').hidden) return;
   if (qrInvitation.expires <= Date.now()) { $('qr-status').textContent = pairingCopy.tvQRExpired; $('pairing-qr').removeAttribute('src'); return; }
   const search = new AbortController(); companionSearch = search;
-  let phone;
+  let phone, searchFailed = false;
   try {
     await findFrameCompanions(search.signal, device => {
       if (device.invitation === qrInvitation.id) { phone = device.url; search.abort(); }
     });
-  } catch { /* Manual pairing remains available if discovery is denied. */ }
+  } catch { searchFailed = true; }
   finally { if (companionSearch === search) companionSearch = undefined; }
   if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  if (searchFailed) $('qr-status').textContent = pairingCopy.tvQRSearchFailed;
   if (phone && !busy) {
     $('retry-qr').dataset.url = phone;
     await action(() => finishQRPairing(phone, qrInvitation, attempt));
+    if (attempt === pairingAttempt && !$('overlay').hidden) $('retry-qr').hidden = false;
   } else {
+    if (!searchFailed && qrInvitation.expires - Date.now() < 270000) $('qr-status').textContent = pairingCopy.tvQRSlow;
     qrSearchTimer = setTimeout(() => { void searchQRPhone(attempt); }, 2000);
     qrSearchTimer?.unref?.();
   }
@@ -502,7 +506,7 @@ function showPairingQR() {
   manualPairing(false); $('retry-qr').hidden = true; $('dialog-error').textContent = '';
   try {
     const code = frameInvitation(savedHost()); qrInvitation = code.invitation;
-    $('pairing-qr').src = code.image; $('qr-status').textContent = pairingCopy.tvQRWaiting;
+    $('pairing-qr').src = code.image; $('pairing-qr').hidden = false; $('qr-status').textContent = pairingCopy.tvQRWaiting;
     void searchQRPhone(attempt);
   } catch (error) { $('dialog-error').textContent = error.message; }
 }
@@ -614,11 +618,14 @@ function savedHost() {
   return privateIPv4(host) ? host : bundledYamahaHost;
 }
 
-async function connect(host, demo = false, pairing) {
+async function connect(host, demo = false, pairing, newlyPaired = false) {
   const candidate = pairing ? new FrameCompanion(pairing) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
   connectingClient = candidate;
   candidate.setActive?.(document.visibilityState === 'visible');
   try {
+  // Completing an explicit new pairing includes its first read-only refresh.
+  // Restores and uncertain operations still require the existing Refresh action.
+  if (newlyPaired) await candidate.reconcile();
   const device = await candidate.request('system/getDeviceInfo');
   const capabilities = await candidate.request('system/getFeatures');
   const available = sources(capabilities);
@@ -627,7 +634,7 @@ async function connect(host, demo = false, pairing) {
   const state = await playerState(candidate, capabilities, status);
   const initial = available.find(item => item.id === 'deezer' && item.browse);
   let menu, menuError;
-  if (initial) { try { menu = await candidate.list(0, initial.id); } catch (error) { menuError = error.message; } }
+  if (initial && !newlyPaired) { try { menu = await candidate.list(0, initial.id); } catch (error) { menuError = error.message; } }
   if (status.power === 'standby' && menu && !Number(menu.max_line)) menu = undefined;
   $('source-error').textContent = menuError ? `Deezer menu unavailable: ${menuError}` : '';
   stopCompanionWatch?.();
