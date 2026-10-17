@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createContext, runInContext } from 'node:vm';
 import { buildApp } from '../scripts/build.js';
+import shared from '../packages/musiccast/dist/index.js';
+import { randomBytes, webcrypto } from 'node:crypto';
 
 // Run the real TV bundle with a small DOM fixture. No device or browser is contacted.
-async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '' } = {}) {
+async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '', companionFetch, webapis, discoveryFetch, onInvitation } = {}) {
   let document, pollPlayer;
   class Element {
     constructor(tagName) {
@@ -63,12 +65,14 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   Object.assign(remote, remoteState);
   const rootMenu = { layer: remote.layer, menu: remote.menu, items: remote.items };
   const context = createContext({
-    document, tizen, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, setInterval(callback) { pollPlayer = callback; },
+    document, tizen, webapis, onInvitation, URL, URLSearchParams, TextEncoder, TextDecoder, crypto: webcrypto, AbortController, setTimeout, clearTimeout, setInterval(callback) { pollPlayer = callback; }, clearInterval() {},
     localStorage: {
       getItem(key) { if (storageUnavailable) throw new Error('Storage unavailable'); return storage.get(key) ?? null; },
       setItem(key, value) { if (storageUnavailable) throw new Error('Storage unavailable'); storage.set(key, value); }
     },
     fetch: async (_url, options) => {
+      if (String(_url).includes(':8095/')) return (companionFetch || discoveryFetch)(_url, options);
+      if (String(_url).startsWith('https://music.home.example.net:8093/')) return companionFetch(_url, options);
       if (String(_url).startsWith('https://lrclib.net/')) {
         calls.push({ route: 'lyrics', url: _url });
         return remote.lyrics ? remote.lyrics(_url, options) : { status: 404, ok: false };
@@ -84,7 +88,8 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
       if (route === 'main/setInput') remote.input = params.input;
       if (route === 'netusb/getPlayInfo') data = { response_code: remote.playInfoCode || 0, input: 'deezer', playback: 'pause', ...remote.info };
       if (route === 'netusb/setListControl') {
-        if (params.type === 'select') Object.assign(remote, { layer: remote.layer + 1, menu: remote.items[params.index].text, items: [{ text: 'Track', attribute: 4 }] });
+        if (remote.control) remote.control(params, remote);
+        else if (params.type === 'select') Object.assign(remote, { layer: remote.layer + 1, menu: remote.items[params.index].text, items: [{ text: 'Track', attribute: 4 }] });
         else if (params.type === 'return') Object.assign(remote, rootMenu);
       }
       if (route === 'netusb/getListInfo') data = { response_code: remote.menuCode, input: params.input, menu_layer: remote.layer, menu_name: remote.menu, index: params.index, max_line: remote.items.length, list_info: remote.items.slice(params.index, params.index + 8) };
@@ -93,7 +98,9 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   });
   // Match the missing APIs on the declared minimum runtime, without patching Node globals.
   runInContext('Object.hasOwn = undefined', context);
-  await runInContext(await buildApp(defaultHost), context);
+  // Observe the QR handoff in memory, without logging or capturing its credential.
+  const bundle = (await buildApp(defaultHost)).replace('const code = frameInvitation(savedHost());', 'const code = frameInvitation(savedHost()); onInvitation?.(code);');
+  await runInContext(bundle, context);
   if (nodes.get('device-name').textContent === 'Preview mode') assert.equal(nodes.get('menu').children.length, 7, nodes.get('message').textContent);
   const key = (key, keyCode, shiftKey = false, repeat = false, timeStamp) => {
     const event = { key, keyCode, shiftKey, repeat, timeStamp, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
@@ -695,6 +702,8 @@ test('theme comparison keeps D-pad focus inside the dialog while the layout chan
   const app = await launch(); const { nodes, document, key } = app;
   nodes.get('open-themes').focus(); nodes.get('open-themes').click();
   nodes.get('close-dialog').bounds = { x: 800, y: 100, width: 60, height: 60 };
+  nodes.get('surface-glass').bounds = { x: 300, y: 180, width: 140, height: 60 };
+  nodes.get('surface-solid').bounds = { x: 470, y: 180, width: 140, height: 60 };
   ['gallery-night', 'record-store-after-hours', 'midnight-precision', 'warm-gallery', 'listening-room-noir', 'record-store', 'quiet-precision', 'light', 'dark'].forEach((theme, i) => {
     nodes.get(`theme-${theme}`).bounds = { x: 300 + (i % 2) * 350, y: 300 + Math.floor(i / 2) * 200, width: 300, height: 150 };
   });
@@ -709,7 +718,7 @@ test('focused menu previews expose full titles and source navigation opens Sourc
   const app = await launch();
   const card = app.nodes.get('menu').children[3]; card.focus();
   assert.equal(app.nodes.get('preview-title').textContent, card.dataset.title);
-  assert.equal(app.nodes.get('preview-action').textContent, card.dataset.action);
+  assert.equal(card.getAttribute('aria-label'), `${card.dataset.title} · ${card.dataset.action}`);
   app.nodes.get('browse-sources').click(); await app.settle();
   assert.equal(app.nodes.get('browse-panel').hidden, true);
   assert.equal(app.nodes.get('sources-panel').hidden, false);
@@ -848,7 +857,7 @@ test('power controls update confirmed state and focus without selecting an input
   app.nodes.get('power-on').click(); await app.settle();
   assert.equal(app.remote.power, 'on');
   assert.equal(app.nodes.get('power-state').dataset.power, 'on');
-  assert.equal(app.nodes.get('power-state').children.length, 3, 'status updates preserve the receiver illustration and light');
+  assert.equal(app.nodes.get('power-state').children.length, 3, 'status updates preserve the logo and light');
   assert.match(app.nodes.get('device-description').textContent, /Connected/);
   assert.equal(app.nodes.get('toggle-play').disabled, false);
   assert.equal(app.document.activeElement, app.nodes.get('power-off'));
@@ -856,7 +865,7 @@ test('power controls update confirmed state and focus without selecting an input
   assert.equal(app.remote.input, 'deezer');
 });
 
-test('receiver indicator follows external power changes and distinguishes unavailable status from standby', async () => {
+test('Yamaha logo follows external power changes and distinguishes unavailable status from standby', async () => {
   const app = await launch(); await app.connect();
   app.remote.power = 'standby';
   app.nodes.get('open-track').click(); await app.settle();
@@ -884,4 +893,298 @@ test('power controls are disabled when unsupported and reject capability removal
   assert.deepEqual(app.calls.map(call => call.route), ['system/getFeatures']);
   assert.match(app.nodes.get('message').textContent, /does not advertise/);
   assert.equal(app.remote.power, undefined);
+});
+
+test('glass and solid surfaces persist independently of themes and do not contact Yamaha', async () => {
+  const app = await launch();
+  assert.equal(app.document.documentElement.dataset.surface, 'glass');
+  await app.connect(); app.calls.length = 0;
+  const title = app.nodes.get('track-title').textContent;
+  app.nodes.get('open-themes').focus(); app.nodes.get('open-themes').click();
+  assert.equal(app.nodes.get('surface-options').hidden, false);
+  app.nodes.get('surface-solid').focus(); app.key('Enter', 13);
+  assert.equal(app.storage.get('frame-music-surface'), 'solid');
+  app.nodes.get('theme-midnight-precision').click();
+  assert.equal(app.document.documentElement.dataset.surface, 'solid');
+  app.nodes.get('surface-glass').click();
+  assert.equal(app.nodes.get('surface-glass').getAttribute('aria-pressed'), 'true');
+  assert.equal(app.nodes.get('surface-solid').getAttribute('aria-pressed'), 'false');
+  app.key('Escape', 27);
+  assert.equal(app.document.activeElement.id, 'open-themes');
+  assert.equal(app.nodes.get('track-title').textContent, title);
+  assert.equal(app.calls.length, 0);
+  for (const surface of ['solid', 'glass', '__proto__']) {
+    const restarted = await launch(undefined, {storage: new Map([['frame-music-surface', surface]])});
+    assert.equal(restarted.document.documentElement.dataset.surface, surface === 'solid' ? 'solid' : 'glass');
+  }
+  const blocked = await launch(undefined, {storageUnavailable: true});
+  blocked.nodes.get('surface-solid').click();
+  assert.equal(blocked.document.documentElement.dataset.surface, 'solid');
+});
+
+test('Help contains separate topics, traps remote focus and returns to its opener without device requests', async () => {
+  const app = await launch(); await app.connect(); app.calls.length = 0;
+  app.nodes.get('help').focus(); app.nodes.get('help').click();
+  assert.equal(app.nodes.get('dialog-title').textContent, 'Help');
+  assert.equal(app.nodes.get('dialog-form').hidden, true);
+  assert.equal(app.nodes.get('help-sections').hidden, false);
+  assert.equal(app.nodes.get('theme-options').hidden, true);
+  assert.equal(app.nodes.get('surface-options').hidden, true);
+  for (const topic of ['remote', 'playback', 'connection', 'artwork']) {
+    app.nodes.get(`help-${topic}`).focus(); app.key('Enter', 13);
+    assert.equal(app.nodes.get(`help-section-${topic}`).hidden, false);
+    assert.equal(app.nodes.get(`help-${topic}`).getAttribute('aria-pressed'), 'true');
+    for (const other of ['remote', 'playback', 'connection', 'artwork'].filter(value => value !== topic)) assert.equal(app.nodes.get(`help-section-${other}`).hidden, true);
+  }
+  app.nodes.get('home').focus(); app.key('ArrowRight', 39);
+  assert.equal(app.document.activeElement.id, 'close-dialog');
+  app.key('Escape', 27);
+  assert.equal(app.document.activeElement.id, 'help');
+  assert.equal(app.calls.length, 0);
+  const card = app.nodes.get('menu').children[0];
+  assert.equal(card.children[1].children.length, 1, 'cards show just their music title');
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html.split('<div id="overlay"')[0], /Audio plays on your Yamaha|Standby stops listening|Lyrics lookups send|Explore ·|ON YOUR YAMAHA/);
+});
+
+async function artistLibrary() {
+  const artists = Array.from({length: 12}, (_, index) => ({text: `Artist ${index}`, attribute: 2}));
+  const history = [];
+  const app = await launch(undefined, {remote: {
+    layer: 1, menu: 'Artists', items: artists,
+    control(params, remote) {
+      if (params.type === 'return') { Object.assign(remote, history.pop()); return; }
+      if (params.type !== 'select') return;
+      history.push({layer: remote.layer, menu: remote.menu, items: remote.items});
+      const name = remote.items[params.index].text;
+      Object.assign(remote, {layer: remote.layer + 1, menu: name, items: remote.menu === 'Artists' ? [{text: `${name} album`, attribute: 2}] : Array.from({length: 20}, (_, index) => ({text: `${name} song ${index}`, attribute: 4}))});
+    }
+  }});
+  await app.connect();
+  const open = async index => {
+    if (index >= 8) { app.nodes.get('page-next').click(); await app.settle(); }
+    const card = app.nodes.get('menu').children[index % 8]; card.focus(); card.click(); await app.settle();
+    app.nodes.get('menu').children[0].focus(); app.nodes.get('menu').children[0].click(); await app.settle();
+  };
+  const hold = async (code, start = 1000) => {
+    app.nodes.get('menu').children[0].focus();
+    app.key('', code, false, false, start);
+    app.key('', code, false, true, start + 300);
+    app.key('', code, false, true, start + 600);
+    await app.settle(); await app.settle();
+  };
+  const release = code => app.document.onkeyup({keyCode: code});
+  return Object.assign(app, {artists, open, hold, release});
+}
+
+test('holding Left/Right pages tracks once per hold, respects edges and never starts playback', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  await app.hold(39);
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  app.key('', 39, false, true, 2500); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  app.release(39); await app.hold(39, 3000);
+  assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
+  app.release(39); await app.hold(39, 4000);
+  assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
+  app.release(39); await app.hold(37, 5000);
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  assert.equal(app.calls.some(call => /setListControl|setPlayback|setPower|setInput/.test(call.route)), false);
+});
+
+test('held Up/Down opens adjacent artists across pages from nested albums and updates the background', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  await app.hold(40);
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  assert.equal(app.nodes.get('main-content').dataset.artist, 'Artist 8');
+  assert.deepEqual(app.calls.filter(call => call.route === 'netusb/setListControl').map(call => call.params.type), ['return', 'return', 'select']);
+  app.key('', 40, false, true, 2500); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  app.release(40); await app.hold(38, 3000);
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 7');
+  assert.equal(app.calls.some(call => /setPlayback|setPower|setInput/.test(call.route)), false);
+});
+
+test('artist shortcuts stop at collection boundaries and can start from an Artists list', async () => {
+  const app = await artistLibrary(); await app.open(0); app.calls.length = 0;
+  await app.hold(38);
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 0 album');
+  assert.equal(app.calls.length, 0);
+  app.release(38); app.key('Escape', 27); await app.settle();
+  app.key('Escape', 27); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artists');
+  assert.equal(app.nodes.get('menu').getAttribute('aria-busy'), 'false');
+  await app.hold(40, 3000);
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 1');
+  const last = await artistLibrary(); await last.open(11); last.calls.length = 0;
+  await last.hold(40);
+  assert.equal(last.nodes.get('menu-title').textContent, 'Artist 11 album');
+  assert.equal(last.calls.length, 0);
+});
+
+test('held shortcuts reject external menu changes and a reordered artist index before selecting', async () => {
+  const changed = await artistLibrary(); await changed.open(7); changed.calls.length = 0;
+  changed.remote.menu = 'External menu';
+  await changed.hold(40);
+  assert.equal(changed.calls.some(call => call.route === 'netusb/setListControl'), false);
+  assert.match(changed.nodes.get('message').textContent, /menu changed/);
+  const reordered = await artistLibrary(); await reordered.open(7); reordered.calls.length = 0;
+  reordered.artists[7] = {text: 'Different artist', attribute: 2};
+  await reordered.hold(40);
+  assert.equal(reordered.calls.some(call => call.route === 'netusb/setListControl' && call.params.type === 'select'), false);
+  assert.match(reordered.nodes.get('message').textContent, /artist list changed/);
+});
+
+test('held shortcuts do not run in dialogs, after key release, when hidden or after changing screens', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  app.nodes.get('help').click();
+  app.key('', 39, false, false, 1000); app.key('', 39, false, true, 2000); await app.settle();
+  assert.equal(app.calls.length, 0);
+  app.key('Escape', 27);
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 39, false, false, 3000); app.release(39);
+  app.key('', 39, false, true, 4000); await app.settle();
+  assert.equal(app.calls.length, 0);
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 39, false, false, 5000);
+  app.nodes.get('now-playing').click(); await app.settle(); app.calls.length = 0;
+  app.key('', 39, false, true, 6000); await app.settle();
+  assert.equal(app.calls.length, 0);
+  app.key('Escape', 27);
+  app.document.visibilityState = 'hidden'; await app.hold(40, 7000);
+  assert.equal(app.calls.length, 0);
+});
+
+
+test('saved demo and missing companion credentials never fall back to the saved Yamaha address', async () => {
+  for (const mode of ['demo', 'companion']) {
+    const app = await launch(undefined, {storage: new Map([['mosaicast-mode', mode], ['yamaha-host', '192.168.1.20']]), defaultHost: '10.0.0.9'});
+    assert.equal(app.calls.length, 0);
+    assert.equal(app.nodes.get('device-name').textContent, 'Preview mode');
+    assert.equal(app.nodes.get('overlay').hidden, mode === 'demo');
+    assert.equal(app.storage.get('mosaicast-mode'), mode);
+  }
+});
+
+test('a companion menu stall leaves Now Playing and themes usable and cannot steal their focus on completion', async () => {
+  const snapshot = {model: 'Shared fixture', features: {controls: ['volume', 'mute'], connectivity: [], sources: [{id: 'deezer', name: 'Deezer', networkPlayer: true}], volumeRange: {min: 0, max: 30, step: 1}}, status: {power: 'on', input: 'deezer', volume: 10, mute: false}, trackUnavailable: false};
+  const page = {input: 'deezer', token: 'menu-fixture', layer: 0, title: 'Deezer', index: 0, total: 1, items: [{index: 0, text: 'Charts', selectable: true, playable: false, searchable: false}]};
+  let gate, writes = 0;
+  const coordinator = new shared.CompanionCoordinator({read: async () => snapshot, execute: async () => { writes++; return snapshot; }, browse: async () => { if (gate) await gate.promise; return page; }, browseAction: async () => ({page})}, 'ui-fixture');
+  await coordinator.handle('setup', {version: 1, generation: 'ui-fixture', sequence: 1, operation: {type: 'reconcile'}});
+  const pairing = {url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex')};
+  const operations = [];
+  const handle = coordinator.handle.bind(coordinator);
+  coordinator.handle = (client, request) => { operations.push(request.operation.type); return handle(client, request); };
+  const phone = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+    const result = await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+    return {ok: true, text: async () => JSON.stringify(result)};
+  }});
+  assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
+  app.nodes.get('refresh').click(); await app.settle();
+  app.nodes.get('source-list').querySelector('button').click(); await app.settle();
+  gate = Promise.withResolvers();
+  app.nodes.get('menu').children[0].click(); await app.settle();
+  assert.equal(app.nodes.get('menu').getAttribute('aria-busy'), 'true');
+  app.nodes.get('now-playing').click();
+  assert.equal(app.nodes.get('track-panel').hidden, false);
+  app.nodes.get('open-themes').click(); app.nodes.get('theme-record-store').click();
+  const focus = app.document.activeElement;
+  assert.equal(app.document.documentElement.dataset.theme, 'record-store');
+  gate.resolve(); await app.settle();
+  assert.equal(app.nodes.get('track-panel').hidden, false);
+  assert.equal(app.document.activeElement, focus);
+  assert.equal(app.nodes.get('overlay').hidden, false);
+  assert.equal(writes, 0); assert.equal(app.calls.length, 0);
+  assert.equal(operations.every(type => ['reconcile', 'browse', 'browseAction'].includes(type)), true);
+});
+
+
+test('shared setup automatically discovers the coordinator without pairing, device writes or focus changes', async () => {
+  const requests = [];
+  const app = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
+    discoveryFetch: async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(String(url).includes('192.168.1.10:') ? { service: 'mosaicast-peer', version: 1, url: 'http://192.168.1.10:8095', epoch: randomBytes(16).toString('hex') } : {}) };
+    } });
+  app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  assert.equal(app.nodes.get('dialog-input').hidden, true);
+  assert.ok(app.nodes.get('pairing-qr').src.startsWith('data:image/svg+xml;'));
+  app.nodes.get('manual-pairing').click();
+  const focused = app.document.activeElement;
+  for (let i = 0; i < 3; i++) await app.settle();
+  assert.equal(requests.length, 265);
+  assert.ok(requests.every(({ options }) => options.method === 'GET' && !options.body && !options.headers));
+  assert.equal(app.nodes.get('companion-results').children.length, 1);
+  assert.equal(app.nodes.get('dialog-input').value, 'http://192.168.1.10:8095');
+  assert.equal(app.document.activeElement, focused);
+  assert.equal(app.calls.length, 0);
+});
+
+test('leaving shared setup cancels all discovery probes and ignores late results', async () => {
+  const probes = [];
+  const app = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
+    discoveryFetch: (_url, options) => new Promise(resolve => probes.push({ options, resolve })) });
+  app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  assert.equal(probes.length, 12);
+  app.nodes.get('close-dialog').click();
+  assert.ok(probes.every(({ options }) => options.signal.aborted));
+  for (const { resolve } of probes) resolve({ ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ service: 'mosaicast-peer', version: 1, url: 'http://192.168.1.10:8095', epoch: randomBytes(16).toString('hex') }) });
+  await app.settle();
+  assert.equal(probes.length, 12);
+  assert.equal(app.nodes.get('companion-results').children.length, 0);
+  assert.equal(app.nodes.get('overlay').hidden, true);
+});
+
+
+for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks phone confirmation when TV mode cannot persist' : 'pairs both devices and reconnects after TV restart'}`, async () => {
+  const records = new Map(), storage = new Map(); let phoneRecord, phoneSaves = 0;
+  const state = { model: 'Fixture', features: { sources: [{ id: 'cd', name: 'CD' }], controls: [], connectivity: [] }, status: { power: 'on', input: 'cd', volume: 10, mute: false }, trackUnavailable: false };
+  const coordinator = new shared.CompanionCoordinator({ read: async () => state }, 'fixture');
+  const phone = new shared.PhonePeerService('192.168.1.20', 'http://192.168.1.10:8095', coordinator, n => new Uint8Array(randomBytes(n)), undefined, async record => { phoneRecord = record; phoneSaves++; });
+  const missing = () => Object.assign(new Error('Missing'), { name: 'NotFoundError' });
+  const tizen = { keymanager: {
+    getData({ name }) { if (!records.has(name)) throw missing(); return records.get(name); },
+    removeData({ name }) { if (!records.delete(name)) throw missing(); },
+    saveData(name, raw, _password, success) { records.set(name, raw); success(); },
+  } };
+  const companionFetch = async (url, options = {}) => {
+    const value = String(url).includes('192.168.1.10:') ? await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined) : {};
+    return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(value) };
+  };
+  const app = await launch(tizen, { storage, storageUnavailable: unavailable, webapis: { network: { getIp: () => '192.168.1.30' } }, companionFetch,
+    onInvitation: code => phone.acceptInvitation(code.text) });
+  app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  for (let i = 0; i < 8; i++) await app.settle();
+  if (unavailable) {
+    assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
+    assert.match(app.nodes.get('dialog-error').textContent, /Could not save/);
+    assert.equal(app.nodes.get('retry-qr').hidden, false);
+    app.nodes.get('close-dialog').click();
+  } else {
+    assert.equal(phoneSaves, 1); assert.equal(records.size, 1);
+    assert.equal(storage.get('mosaicast-mode'), 'companion');
+    assert.equal(app.nodes.get('overlay').hidden, true);
+    assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
+    app.nodes.get('refresh').click(); await app.settle();
+    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.ok([...records.values()].some(raw => JSON.parse(raw).record.key === phoneRecord.key));
+    const restarted = await launch(tizen, { storage, companionFetch });
+    assert.equal(restarted.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
+    restarted.nodes.get('refresh').click(); await restarted.settle();
+    assert.equal(restarted.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.equal(restarted.calls.length, 0);
+  }
+  assert.equal(app.calls.length, 0); phone.close();
+});
+
+test('pairing QR is discarded on backgrounding and closing', async () => {
+  const app = await launch(); app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  app.document.visibilityState = 'hidden'; app.document.onvisibilitychange();
+  assert.equal(app.nodes.get('retry-qr').hidden, true);
+  assert.match(app.nodes.get('qr-status').textContent, /expired/);
+  app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
+  app.nodes.get('refresh-qr').click(); app.nodes.get('close-dialog').click();
+  assert.equal(app.nodes.get('overlay').hidden, true);
 });

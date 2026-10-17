@@ -4,11 +4,12 @@ Bug reports, documentation improvements, device compatibility reports and focuse
 
 ## Development
 
-Use Node.js 22 or newer. No package installation, account, API key or hardware is required for the simulated tests and preview.
+Use Node.js 22 or newer. No account, API key or hardware is required for the simulated tests and preview.
 
 ```sh
-npm test
-npm run build
+npm ci
+npm run check
+npm run bundle:check
 npm start
 ```
 
@@ -18,7 +19,7 @@ Open http://127.0.0.1:4173 for Preview mode. See the [README](README.md) for con
 
 - Search [existing issues](https://github.com/Desperado/frame-music/issues). For bugs, include expected and actual behavior, reproduction steps, app revision, Node/browser or TV version, and relevant Yamaha model/firmware. Remove personal device identifiers and network details.
 - Keep pull requests focused. Explain the user-visible change, tests run and any hardware checks still needed. Add a regression test for a behavior fix, and update documentation when behavior changes.
-- Run `npm test` and `npm run build`. UI changes should be checked in Preview mode with arrow keys, Enter and Back/Escape, including dialogs, empty states and themes. State exactly which physical devices were tested; simulated tests do not establish TV compatibility.
+- Run `npm run check` and `npm run bundle:check`. UI changes should be checked in Preview mode with arrow keys, Enter and Back/Escape, including dialogs, empty states and themes. State exactly which physical devices were tested; simulated tests do not establish TV compatibility.
 - Preserve the local-only preview server, host and route validation, serialized device requests, text-only rendering of device/lyrics content and safeguards against unwanted playback. Never make automated tests depend on live devices, public providers or account credentials.
 - When testing hardware, get the device owner's agreement before changing power, input, playback, volume or mute. Restore the original state when practical and describe the checks performed.
 

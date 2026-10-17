@@ -83,10 +83,11 @@ export function createServer(upstream = fetch) {
         }
         return reply(200, publicResponse(payload.route, JSON.parse(Buffer.concat(chunks).toString('utf8')), payload.host));
       }
+      if (req.method === 'GET' && req.url === '/$WEBAPIS/webapis/webapis.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(''); return; }
       if (req.method !== 'GET' || !Object.hasOwn(assets, req.url)) return reply(404, { error: 'Not found.' });
       const [name, type] = assets[req.url];
       const content = await readFile(new URL(`../app/${name}`, import.meta.url));
-      res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; connect-src 'self' https://lrclib.net; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", 'Cache-Control': 'no-store' });
+      res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; img-src 'self' data: http://*; connect-src 'self' https://lrclib.net https://*:8093 http://*:8095; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", 'Cache-Control': 'no-store' });
       res.end(content);
     } catch { reply(502, { error: 'Device unavailable.' }); }
   });

@@ -1,11 +1,13 @@
 const sceneText = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 
+export const isArtistFolder = name => ['artists', 'artist', 'my artists', 'favourite artists', 'favorite artists'].includes(sceneText(name));
+
 // Yamaha lists contain names, not artist IDs or artist photographs. Use explicit
 // artist folders or matching playback metadata; never borrow an unrelated cover.
 export function artistScene(path, info = {}) {
   const names = path.filter(value => typeof value === 'string' && value.trim());
   const normalized = names.map(sceneText);
-  const artistFolder = normalized.findIndex(name => ['artists', 'artist', 'my artists', 'favourite artists', 'favorite artists'].includes(name));
+  const artistFolder = names.findIndex(isArtistFolder);
   const playingArtist = sceneText(info.artist), playingAlbum = sceneText(info.album);
   let artist = artistFolder >= 0 ? names[artistFolder + 1] : '';
   if (!artist && normalized.includes('muse')) artist = 'Muse';

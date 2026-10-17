@@ -14,18 +14,35 @@ Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md), the [code of
 | --- | --- |
 | [pyamaha](https://github.com/rsc-dev/pyamaha) | MusicCast protocol reference for our JavaScript implementation; not an installed Python dependency. |
 | [LRCLIB](https://github.com/tranxuanthang/lrclib) | External lyrics API used by `app/metadata.js`; its server code is not bundled. |
+| [Mosaicast coordinator](packages/musiccast/README.md), [Noble](https://github.com/paulmillr/noble-ciphers), [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) | Local phone/TV coordination, authenticated encryption and QR rendering; bundled under MIT. |
+| [esbuild](https://github.com/evanw/esbuild), [TypeScript](https://github.com/microsoft/TypeScript) | Development build tools; not shipped as TV runtimes. |
 | [Node.js](https://github.com/nodejs/node) | Build, test and local preview runtime; the TV runs the generated JavaScript without Node.js. |
 | [Tizen](https://www.tizen.org/) | Target web application platform; Samsung TV APIs and tooling are used separately from this source. |
 | [Google Fonts](https://github.com/google/fonts) and the font projects | Seven font families bundled locally under OFL-1.1, with their original notices. |
 | [actions/checkout](https://github.com/actions/checkout), [actions/setup-node](https://github.com/actions/setup-node) | GitHub CI tooling; not part of the TV application. |
 
-There are no third-party npm dependencies. The [full inventory](THIRD_PARTY_NOTICES.md) links each font's upstream project and local license, and distinguishes these open-source relationships from proprietary device APIs and media content.
+The TV bundles the Mosaicast coordinator, Noble cryptography and qrcode-generator. esbuild and TypeScript are development tools. The [full inventory](THIRD_PARTY_NOTICES.md) links each font's upstream project and local license, and distinguishes these open-source relationships from proprietary device APIs and media content.
+
+## Connect iPhone + TV with QR
+
+On the TV, open **Connection → Connect phone + TV**. On the iPhone running Mosaicast Dev build 12 or newer, open **Connect phone + TV** and scan the TV code. Enter the Yamaha address on the phone if requested. Keep both apps open until pairing finishes. The code expires after five minutes; choose **New QR code** to replace it. Address pairing remains available as a fallback and requires comparing the six-digit code on both screens.
+
+The TV writes its pairing to Tizen Key Manager in an alternate slot and verifies it by reading it back before asking the phone to save. The phone also verifies its secure-store write. A failure stays visible and **Try again** repeats only pairing confirmation, never a Yamaha command. Existing TV records remain intact if the replacement cannot be written. After restarting both apps, the saved pair reconnects without another QR scan. If the TV shows **REFRESH CONNECTION** after pairing or restart, choose **Refresh** to check the Yamaha before enabling controls. Both devices must be on the same Wi-Fi; discovery searches the local /24. The phone must be open for phone coordination. The TV waits for the phone lease to expire and requires **Refresh** before standalone recovery after a disconnect.
+
+Browser preview stores pairing only in memory. Durable TV storage requires the Tizen Key Manager API. Pairing QR codes and stored records are credentials: do not include them in screenshots, logs or issues. The new flow is covered by simulated tests; physical iPhone/Frame TV validation is still required.
+
+### Українською
+
+На TV відкрийте **Connection → Connect phone + TV**. У Mosaicast Dev на iPhone (збірка 12 або новіша) відкрийте **Телефон + TV** та скануйте код телевізора. За потреби введіть адресу Yamaha на телефоні. Залиште обидва застосунки відкритими до завершення збереження. QR діє п’ять хвилин; для заміни оберіть **Новий QR-код**. Підключення за адресою залишається доступним із порівнянням коду на двох екранах.
+
+Пара зберігається в захищеній пам’яті телефона та Tizen Key Manager телевізора. Обидва записи перевіряються читанням. Помилка збереження залишається на екрані; повторне підтвердження не повторює команд Yamaha. Після перезапуску повторно сканувати QR не потрібно. Якщо TV показує **REFRESH CONNECTION** після підключення або перезапуску, натисніть **Refresh**, щоб перевірити стан Yamaha й увімкнути керування. Обидва пристрої мають бути в одній мережі; телефон має залишатися відкритим для координації. У браузерному прев’ю пара зберігається лише до перезавантаження сторінки. На фізичних iPhone і TV цей сценарій ще потрібно перевірити.
 
 ## Try it on this Mac
 
-Requires Node.js 22 or newer. There are no dependencies to install.
+Requires Node.js 22 or newer. Install the locked dependencies first.
 
 ```sh
+npm ci
 npm start
 ```
 
@@ -89,13 +106,13 @@ The `app/` directory is a Tizen web application, with its own `config.xml`. The 
 2. On the TV’s Apps screen, enter **12345** to open Developer Mode. Enable it, enter this Mac’s LAN IP, and restart the TV. Keep the Mac, TV and Yamaha on the same network. See [Samsung’s device setup guide](https://developer.samsung.com/smarttv/develop/getting-started/using-sdk/tv-device.html).
 3. Run `npm run build`, then import `app/` as an existing Tizen web project. In Certificate Manager, create a Samsung TV certificate profile with your TV’s device identifier. Keep certificate files and signing passwords outside this repository.
 4. Connect to the TV in Device Manager and grant permission to install applications. Select the certificate profile, then run the project as a Tizen Web Application. Samsung’s tooling builds and signs the `.wgt` package.
-5. Open Frame Music on the TV, choose **Connection**, and enter the Yamaha’s address once. Later launches reconnect automatically to the saved device, including after the TV restarts and opens the app again. This does not configure the TV to launch the app automatically at power-on.
+5. Open Frame Music on the TV and choose **Connection → Connect phone + TV** for QR pairing with Mosaicast Dev. For direct TV control, enter the Yamaha’s address under **Connection** instead. Later launches reconnect automatically to the saved device, including after the TV restarts and opens the app again. This does not configure the TV to launch the app automatically at power-on.
 
 The build also copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `app/` for packaging. Keep those generated notices and the bundled font licenses in redistributed TV packages.
 
 Samsung preserves local storage during app updates but clears it when the app is uninstalled; see [Samsung's data storage FAQ](https://developer.samsung.com/smarttv/develop/faq/data-and-file-handling.html). For a personalised TV package that can reconnect even after a full uninstall/reinstall, run `npm run build -- --yamaha-host 192.168.1.20` with your device's private IPv4 address before staging/signing the package. That preset is embedded only in the ignored generated bundle, not the source. A valid saved address takes priority over the preset. A regular `npm run build` removes the preset and produces the generic setup experience. A changed DHCP address still requires updating Connection or using a router DHCP reservation.
 
-The Tizen tools are not installed in this workspace, so no signed package or physical TV installation is claimed. No rooting is required. This first version is the on-TV music app; Frame Art Mode image uploads and an iPhone interface are separate work.
+The Tizen tools are not installed in this workspace, so no signed package or physical TV installation is claimed. No rooting is required. Frame Art Mode image uploads are separate work. The phone integration requires the matching Mosaicast Dev app described above.
 
 ## Development
 

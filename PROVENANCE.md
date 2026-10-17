@@ -7,7 +7,7 @@ Bundled fonts and runtime media remain separate from the MIT grant.
 
 | Material | Location | Origin and license |
 | --- | --- | --- |
-| Application, scripts, tests, styles and documentation | `app/`, `scripts/`, `test/`, root documentation | Created for Frame Music; MIT. No npm dependencies or vendored third-party code. pyamaha is a documented protocol reference. |
+| Application, scripts, tests, styles and documentation | `app/`, `scripts/`, `test/`, root documentation | Created for Frame Music; MIT. Bundled dependencies and the vendored Mosaicast coordinator retain their own MIT notices; see the inventory. pyamaha is a documented protocol reference. |
 | App icon | `app/icon.svg`, `app/icon.png` | Project artwork; MIT. |
 | Orbital illustration | `app/assets/artist-orbits.svg` | Project artwork; MIT. |
 | Generic receiver illustration | `app/assets/receiver.svg` | Created during open-source preparation to replace the Yamaha logo; MIT. |

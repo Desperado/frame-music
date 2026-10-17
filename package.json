@@ -15,7 +15,24 @@
     "build": "node scripts/build.js",
     "prestart": "npm run build",
     "start": "node scripts/server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js && npm test --workspace @mosaicast/musiccast",
+    "pretest": "npm run build:shared",
+    "build:shared": "npm run build --workspace @mosaicast/musiccast",
+    "typecheck": "npm run typecheck --workspace @mosaicast/musiccast",
+    "check": "npm run typecheck && npm test && npm run build",
+    "bundle:check": "npm run build"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "~6.0.3"
+  }
 }

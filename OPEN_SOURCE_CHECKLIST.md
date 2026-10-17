@@ -33,4 +33,4 @@ Published on 2026-10-17 in a separate public repository, [Desperado/frame-music]
 
 ## Ongoing maintenance
 
-Review security reports privately, keep contributor guidance accurate, and triage issues with reproducible evidence. Keep CI action pins current. If dependencies are added, introduce a lockfile and dependency update/security checks appropriate to that ecosystem. There is currently no npm dependency tree to maintain.
+Review security reports privately, keep contributor guidance accurate, and triage issues with reproducible evidence. Keep CI action pins current. If dependencies are added, introduce a lockfile and dependency update/security checks appropriate to that ecosystem. The locked npm workspace now includes the coordinator, QR rendering and build dependencies; Dependabot checks npm and GitHub Actions weekly.

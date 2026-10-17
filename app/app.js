@@ -1,7 +1,8 @@
+import { FrameCompanion, findFrameCompanions, pairFrame, frameInvitation, savedCompanion, companionFeatures, companionStatus, companionInfo, companionTuner } from './companion.js';
 import { MusicCast, transport, entries, soundControls, sources, sourceName, deviceCapabilities, privateIPv4 } from './protocol.js';
 import { demoTransport } from './demo.js';
 import { LyricsLoader, artworkUrl, trackKey } from './metadata.js';
-import { artistScene, sceneMatchesTrack } from './artist-scene.js';
+import { artistScene, sceneMatchesTrack, isArtistFolder } from './artist-scene.js';
 
 const $ = id => document.getElementById(id);
 const themes = {
@@ -33,16 +34,27 @@ try { savedTheme = localStorage.getItem('frame-music-theme'); } catch { /* Use t
 setTheme(Object.prototype.hasOwnProperty.call(themes, savedTheme) ? savedTheme : 'gallery-night');
 for (const theme of Object.keys(themes)) $(`theme-${theme}`).onclick = () => setTheme(theme, true);
 
+function setSurface(surface, save = false) {
+  if (!['glass', 'solid'].includes(surface)) return;
+  document.documentElement.dataset.surface = surface;
+  for (const value of ['glass', 'solid']) $(`surface-${value}`).setAttribute('aria-pressed', String(surface === value));
+  if (save) { try { localStorage.setItem('frame-music-surface', surface); } catch { /* Appearance still works without storage. */ } }
+}
+let savedSurface;
+try { savedSurface = localStorage.getItem('frame-music-surface'); } catch { /* Use glass when storage is unavailable. */ }
+setSurface(savedSurface === 'solid' ? 'solid' : 'glass');
+for (const surface of ['glass', 'solid']) $(`surface-${surface}`).onclick = () => setSurface(surface, true);
+
+let stopCompanionWatch, viewEpoch = 0, operationView = 0;
 let client, list, features, isDemo = true, busy = false, prepared = false, dialogMode, searchEntry, priorFocus, browsingInput = 'deezer', sourceView = false, currentStatus;
 let trackView = false, metadataKey = '', metadataVersion = 0, artKey = '', artRevision = 0;
 let trackOrigin = 'menu';
 let sceneTrack = {}, sceneArtwork = '', sceneVersion = 0, browseScene = null;
 const viewMemory = new Map(), menuParents = [];
 const zoneMemory = new Map();
-let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0;
+let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0, heldArrow;
 const lyricsLoader = new LyricsLoader();
 const icons = { Flow: '≈', Charts: '↗', Recommendations: '✧', Mixes: '♫', Genres: '◈', 'My library': '▤', Search: '⌕' };
-const hints = { Flow: 'A mix made for you', Charts: 'What the world is listening to', Recommendations: 'Your next favourite', Mixes: 'Set the mood', Genres: 'Follow your curiosity', 'My library': 'All the music you love', Search: 'Find an artist, album or track' };
 
 function message(text, error = false) {
   $('message').textContent = text;
@@ -51,10 +63,10 @@ function message(text, error = false) {
 
 async function action(work) {
   if (busy) return;
-  busy = true;
+  busy = true; operationView = viewEpoch;
   $('menu').setAttribute('aria-busy', 'true');
   message('');
-  try { await work(); message(isDemo ? 'Preview mode · example menus and music' : ''); }
+  try { await work(); message(''); }
   catch (error) {
     message(error.message, true);
     if (!$('overlay').hidden) $('dialog-error').textContent = error.message;
@@ -82,6 +94,7 @@ function artistPath(data) {
 }
 
 function renderMenu(data, focusIndex) {
+  if (busy && operationView !== viewEpoch && data !== list) return;
   rememberView();
   const sameMenu = list?.input === data.input && list?.menu_layer === data.menu_layer && list?.menu_name === data.menu_name;
   const path = artistPath(data);
@@ -96,8 +109,7 @@ function renderMenu(data, focusIndex) {
   $('service-label').textContent = sourceName(browsingInput).toUpperCase();
   $('menu').setAttribute('aria-label', `${sourceName(browsingInput)} menu`);
   $('menu-title').textContent = data.menu_name || sourceName(browsingInput);
-  $('breadcrumb').textContent = Number(data.menu_layer) > 0 ? `${sourceName(browsingInput).toUpperCase()} / YOUR MUSIC` : 'A LITTLE SPACE FOR MUSIC';
-  $('subtitle').textContent = Number(data.menu_layer) > 0 ? 'Choose something to listen to.' : 'Find your next favourite. Let the room do the listening.';
+  $('breadcrumb').textContent = Number(data.menu_layer) > 0 ? `${sourceName(browsingInput).toUpperCase()} / YOUR MUSIC` : '';
   $('back').hidden = !(Number(data.menu_layer) > 0);
   const start = Number(data.index || 0), count = Number(data.max_line || 0);
   $('page-prev').hidden = start < 8;
@@ -117,8 +129,8 @@ function renderMenu(data, focusIndex) {
     icon.className = 'card-icon'; icon.textContent = icons[item.text] || (item.browse ? '▤' : '♫'); icon.setAttribute('aria-hidden', 'true');
     const copy = document.createElement('span'); copy.className = 'card-copy';
     const title = document.createElement('strong'); title.textContent = item.text;
-    const hint = document.createElement('small'); hint.textContent = hints[item.text] || (item.search ? 'Search this collection' : item.browse ? (item.play ? 'Open · Play key to listen' : 'Open collection') : item.play ? 'Play on your Yamaha' : 'Unavailable');
-    copy.append(title, hint);
+    copy.append(title);
+    button.setAttribute('aria-label', `${item.text} · ${button.dataset.action}`);
     const arrow = document.createElement('span'); arrow.className = 'card-arrow'; arrow.textContent = item.search ? '⌕' : item.browse ? '›' : '▷'; arrow.setAttribute('aria-hidden', 'true');
     button.append(icon, copy, arrow);
     button.addEventListener('click', () => item.search ? openDialog('search', item) : action(() => activate(item, item.browse ? 'select' : 'play')));
@@ -138,7 +150,7 @@ function renderPowerState(power) {
 
 function renderPlayer(info, status) {
   currentStatus = status;
-  $('device-description').textContent = isDemo ? 'Connect your Yamaha to listen' : `${client.host} · ${status.power === 'on' ? 'Connected' : status.power === 'standby' ? 'Standby' : 'Power status unavailable'}`;
+  $('device-description').textContent = isDemo ? '' : `${client.host} · ${status.power === 'on' ? 'Connected' : status.power === 'standby' ? 'Standby' : 'Power status unavailable'}`;
   const canPower = features.zone?.find(zone => zone.id === 'main')?.func_list?.includes('power');
   $('power-on').disabled = !canPower || status.power === 'on';
   $('power-off').disabled = !canPower || status.power === 'standby';
@@ -153,6 +165,32 @@ function renderPlayer(info, status) {
   $('toggle-play').textContent = info.playback === 'play' ? 'Ⅱ' : '▶';
   $('toggle-play').setAttribute('aria-label', info.playback === 'play' ? 'Pause Yamaha playback' : 'Play Yamaha playback');
   preloadTrack(info, status);
+  renderTuner(client?.companion ? client.controller.state?.snapshot : undefined);
+}
+
+let tunerSignature = '';
+function renderTuner(snapshot) {
+  const tuner = companionTuner(snapshot);
+  $('tuner-panel').hidden = !tuner;
+  if (!tuner) return;
+  $('tuner-status').textContent = tuner.description;
+  $('track-title').textContent = tuner.title; $('detail-title').textContent = tuner.title;
+  $('track-artist').textContent = tuner.description;
+  const signature = JSON.stringify(tuner.controls);
+  if (signature === tunerSignature) return;
+  tunerSignature = signature;
+  const focused = document.activeElement, focusKey = $('tuner-controls').contains(focused) ? focused.dataset.focusKey : undefined;
+  $('tuner-controls').textContent = '';
+  for (const control of tuner.controls) {
+    const button = document.createElement('button'); button.className = 'quiet';
+    button.textContent = control.label; button.dataset.focusKey = `tuner:${control.id}`; button.disabled = !!control.disabled;
+    button.onclick = () => action(() => client.command(control.command));
+    $('tuner-controls').append(button);
+  }
+  if (focusKey && trackView && $('overlay').hidden) {
+    const buttons = [...$('tuner-controls').querySelectorAll('button:not(:disabled)')];
+    focusControl(buttons.find(button => button.dataset.focusKey === focusKey) || buttons[0] || $('sources'));
+  }
 }
 
 function clockTime(seconds) {
@@ -215,10 +253,10 @@ function renderTrack() {
   $('browse-panel').hidden = true; $('main-content').dataset.view = 'track';
   renderArtistScene();
   $('browse-sources').classList.toggle('selected', false);
-  $('service-label').textContent = 'NOW PLAYING'; $('breadcrumb').textContent = 'YOUR LISTENING ROOM';
-  $('menu-title').textContent = 'Now playing'; $('subtitle').textContent = 'The song, the artwork, the words.';
+  $('service-label').textContent = 'NOW PLAYING'; $('breadcrumb').textContent = '';
+  $('menu-title').textContent = 'Now playing';
   $('back').hidden = false; $('page-prev').hidden = true; $('page-next').hidden = true;
-  $('menu-count').textContent = 'Details preload as the current song changes.';
+  $('menu-count').textContent = '';
   playerOrigin = 'content';
   ($('toggle-play').disabled ? $('sources') : $('toggle-play')).focus();
 }
@@ -251,8 +289,8 @@ function renderSources(focus = false) {
   $('menu').hidden = true; $('sources-panel').hidden = false;
   $('browse-panel').hidden = true; $('main-content').dataset.view = 'sources';
   $('browse-sources').classList.toggle('selected', true);
-  $('service-label').textContent = 'MUSICCAST'; $('breadcrumb').textContent = 'YOUR LISTENING ROOM';
-  $('menu-title').textContent = 'All sources'; $('subtitle').textContent = 'Every input advertised by your Yamaha.';
+  $('service-label').textContent = 'MUSICCAST'; $('breadcrumb').textContent = '';
+  $('menu-title').textContent = 'All sources';
   $('back').hidden = !list; $('page-prev').hidden = true; $('page-next').hidden = true;
   const available = sources(features);
   $('menu-count').textContent = `${available.length} inputs · ${currentStatus?.power === 'standby' ? 'Standby' : 'Current input: ' + sourceName(currentStatus?.input)}`;
@@ -260,7 +298,6 @@ function renderSources(focus = false) {
   for (const source of available) {
     const card = document.createElement('article'); card.className = 'source-card';
     const title = document.createElement('h2'); title.textContent = source.name;
-    const hint = document.createElement('p'); hint.textContent = source.description;
     const controls = document.createElement('div'); controls.className = 'source-actions';
     if (source.browse) {
       const browse = document.createElement('button'); browse.className = 'quiet'; browse.textContent = 'Browse';
@@ -283,7 +320,7 @@ function renderSources(focus = false) {
       const state = await playerState(client, features, status);
       renderPlayer(state.info, state.status); renderSound(state.status); renderSources(true);
     });
-    controls.append(select); card.append(title, hint, controls); container.append(card);
+    controls.append(select); card.append(title, controls); container.append(card);
   }
   const capabilities = $('capability-list'); capabilities.textContent = '';
   for (const label of deviceCapabilities(features)) { const item = document.createElement('li'); item.textContent = label; capabilities.append(item); }
@@ -306,7 +343,7 @@ function sound(command) {
     const focused = document.activeElement;
     renderSound(await client.sound(command, features));
     // A button can become disabled at the volume limit. Keep remote focus usable.
-    if (focused.disabled) $('mute').disabled ? $('toggle-play').focus() : $('mute').focus();
+    if (focused.disabled) { if ($('mute').disabled) $('toggle-play').focus(); else $('mute').focus(); }
   });
 }
 
@@ -326,7 +363,7 @@ async function activate(item, type) {
   try {
     item = await ensurePrepared(item);
     rememberView();
-    const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0) };
+    const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0), selected: { index: item.index, text: item.text, attribute: item.attribute }, count: Number(list.max_line || 0) };
     await client.control(type, item.index);
     if (type === 'select') {
       menuParents.push(parent); if (menuParents.length > 32) menuParents.shift();
@@ -336,18 +373,75 @@ async function activate(item, type) {
   } finally { renderArtistScene(); }
 }
 
+async function currentMenu() {
+  const fresh = await client.list(Number(list.index || 0), browsingInput);
+  if (fresh.input !== browsingInput || fresh.menu_layer !== list.menu_layer || fresh.menu_name !== list.menu_name || JSON.stringify(fresh.list_info) !== JSON.stringify(list.list_info)) {
+    menuParents.length = 0; renderMenu(fresh, 0);
+    throw new Error('The Yamaha menu changed. Choose your item again.');
+  }
+  return fresh;
+}
+
+async function pageMenu(direction) {
+  const fresh = await currentMenu();
+  const start = Number(fresh.index || 0) + direction * 8;
+  if (start < 0 || start >= Number(fresh.max_line || 0)) return;
+  const page = await client.list(start, browsingInput);
+  if (page.input !== fresh.input || page.menu_layer !== fresh.menu_layer || page.menu_name !== fresh.menu_name) {
+    menuParents.length = 0; renderMenu(page, 0);
+    throw new Error('The Yamaha menu changed. Choose your item again.');
+  }
+  renderMenu(page, start);
+}
+
+function artistParent() { return [...menuParents].reverse().find(parent => isArtistFolder(parent.name) && parent.selected); }
+
+async function adjacentArtist(direction, selected) {
+  const parent = artistParent();
+  if (!isArtistFolder(list.menu_name) && !parent) return;
+  selected ||= parent?.selected;
+  if (!selected) return;
+  const target = selected.index + direction;
+  // At either end, keep the current artist and its track page in place.
+  if (target < 0 || target >= (isArtistFolder(list.menu_name) ? Number(list.max_line) : parent.count)) return;
+  await currentMenu();
+  while (!isArtistFolder(list.menu_name)) {
+    const saved = menuParents[menuParents.length - 1];
+    if (!saved) return;
+    await client.control('return');
+    const data = await client.list(saved.index, browsingInput);
+    menuParents.pop();
+    if (data.input !== browsingInput || data.menu_layer !== saved.layer || data.menu_name !== saved.name) {
+      menuParents.length = 0; renderMenu(data, 0);
+      throw new Error('The Yamaha menu changed. Choose your artist again.');
+    }
+    renderMenu(data, null);
+    await currentMenu();
+  }
+  // Check the artist we came from before selecting a neighbouring shared index.
+  const originPage = await client.list(Math.floor(selected.index / 8) * 8, browsingInput);
+  const origin = entries(originPage).find(item => item.index === selected.index && item.text === selected.text && item.attribute === selected.attribute);
+  if (originPage.input !== browsingInput || originPage.menu_layer !== list.menu_layer || originPage.menu_name !== list.menu_name || !origin) {
+    menuParents.length = 0; renderMenu(originPage, 0);
+    throw new Error('The artist list changed. Choose your artist again.');
+  }
+  const page = Math.floor(target / 8) === Math.floor(selected.index / 8) ? originPage : await client.list(Math.floor(target / 8) * 8, browsingInput);
+  if (page.input !== originPage.input || page.menu_layer !== originPage.menu_layer || page.menu_name !== originPage.menu_name) {
+    menuParents.length = 0; renderMenu(page, 0);
+    throw new Error('The artist list changed. Choose your artist again.');
+  }
+  renderMenu(page, target);
+  const artist = entries(page).find(item => item.index === target && item.browse);
+  if (artist) await activate(artist, 'select');
+}
+
 async function back() {
   if (!$('overlay').hidden) { closeDialog(); return; }
+  if (trackView) { ++viewEpoch; if (trackOrigin === 'sources' || !list) renderSources(true); else renderMenu(list, null); return; }
+  if (sourceView && list) { ++viewEpoch; renderMenu(list, null); return; }
   if (busy) return;
-  if (trackView) { if (trackOrigin === 'sources' || !list) renderSources(true); else renderMenu(list, null); return; }
-  if (sourceView && list) { renderMenu(list, null); return; }
   if (Number(list?.menu_layer) > 0) await action(async () => {
-    const fresh = await client.list(Number(list.index || 0), browsingInput);
-    if (fresh.input !== browsingInput || fresh.menu_layer !== list.menu_layer || fresh.menu_name !== list.menu_name || JSON.stringify(fresh.list_info) !== JSON.stringify(list.list_info)) {
-      menuParents.length = 0;
-      renderMenu(fresh, 0);
-      throw new Error('The Yamaha menu changed. Choose Back again if you want to return.');
-    }
+    await currentMenu();
     await client.control('return');
     let parent = await client.list(0, browsingInput);
     const saved = menuParents.pop();
@@ -360,14 +454,98 @@ async function back() {
   else message('You’re at the home menu.');
 }
 
+const pairingCopy = companionAPI[/^uk/.test(globalThis.navigator?.language || '') ? 'uk' : 'en'];
+let companionSearch, pendingPair, qrInvitation, qrSearchTimer, pairingAttempt = 0;
+function manualPairing(visible) {
+  for (const id of ['input-label', 'dialog-input', 'submit-dialog', 'companion-fields']) $(id).hidden = !visible;
+}
+async function finishQRPairing(url, invitation, attempt) {
+  client?.setActive?.(false);
+  if (client?.pending) throw new Error('Wait for the current Yamaha operation to finish.');
+  $('retry-qr').hidden = false;
+  if (!pendingPair) {
+    const pending = await pairFrame(url, invitation);
+    if (attempt !== pairingAttempt || $('overlay').hidden) return;
+    pendingPair = { ...pending, url };
+  }
+  $('retry-qr').hidden = false;
+  rememberPairingMode();
+  const pairing = await pendingPair.confirm();
+  // A closed dialog must still remember a completed save, without changing its screen.
+  saveMode('companion');
+  if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  $('qr-status').textContent = pairingCopy.tvQRSaved;
+  await connect(pairing.receiver, false, pairing);
+}
+async function searchQRPhone(attempt) {
+  if (attempt !== pairingAttempt || !qrInvitation || $('overlay').hidden) return;
+  if (qrInvitation.expires <= Date.now()) { $('qr-status').textContent = pairingCopy.tvQRExpired; $('pairing-qr').removeAttribute('src'); return; }
+  const search = new AbortController(); companionSearch = search;
+  let phone;
+  try {
+    await findFrameCompanions(search.signal, device => {
+      if (device.invitation === qrInvitation.id) { phone = device.url; search.abort(); }
+    });
+  } catch { /* Manual pairing remains available if discovery is denied. */ }
+  finally { if (companionSearch === search) companionSearch = undefined; }
+  if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  if (phone && !busy) {
+    $('retry-qr').dataset.url = phone;
+    await action(() => finishQRPairing(phone, qrInvitation, attempt));
+  } else {
+    qrSearchTimer = setTimeout(() => { void searchQRPhone(attempt); }, 2000);
+    qrSearchTimer?.unref?.();
+  }
+}
+function showPairingQR() {
+  stopCompanionSearch(); pendingPair = undefined; const attempt = ++pairingAttempt;
+  manualPairing(false); $('retry-qr').hidden = true; $('dialog-error').textContent = '';
+  try {
+    const code = frameInvitation(savedHost()); qrInvitation = code.invitation;
+    $('pairing-qr').src = code.image; $('qr-status').textContent = pairingCopy.tvQRWaiting;
+    void searchQRPhone(attempt);
+  } catch (error) { $('dialog-error').textContent = error.message; }
+}
+function stopCompanionSearch() {
+  clearTimeout(qrSearchTimer); qrSearchTimer = undefined;
+  companionSearch?.abort(); companionSearch = undefined;
+  $('find-companions').textContent = 'Search again';
+}
+async function searchCompanions() {
+  stopCompanionSearch();
+  const controller = new AbortController(); companionSearch = controller;
+  $('companion-results').textContent = '';
+  $('companion-discovery-status').textContent = 'Finding your iPhone…';
+  $('find-companions').textContent = 'Cancel search';
+  try {
+    const devices = await findFrameCompanions(controller.signal, device => {
+      if (controller.signal.aborted) return;
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = device.url;
+      button.onclick = () => { stopCompanionSearch(); $('dialog-input').value = device.url; $('submit-dialog').focus(); };
+      $('companion-results').append(button);
+    });
+    if (!controller.signal.aborted) {
+      if (devices.length === 1 && $('dialog-input').value === 'http://') $('dialog-input').value = devices[0].url;
+      $('companion-discovery-status').textContent = devices.length ? 'Choose your phone, then compare the code on both screens.' : 'No phone found. Open Connect phone + TV on your iPhone, check Wi-Fi, or enter its address.';
+    }
+  } catch {
+    if (!controller.signal.aborted) $('companion-discovery-status').textContent = 'Local discovery unavailable. Enter the phone address, or check network permissions and search again.';
+  } finally { if (companionSearch === controller) stopCompanionSearch(); }
+}
+
 function openDialog(mode, item) {
-  if (busy) return;
+  stopCompanionSearch(); pendingPair = undefined; ++pairingAttempt;
   dialogMode = mode; searchEntry = item; priorFocus = document.activeElement;
   $('overlay').hidden = false;
-  $('dialog-form').hidden = mode === 'exit' || mode === 'theme';
+  $('dialog-form').hidden = !['connect', 'companion', 'search'].includes(mode);
+  $('help-sections').hidden = mode !== 'help';
+  $('surface-options').hidden = mode !== 'theme';
+  heldArrow = undefined;
   $('exit-actions').hidden = mode !== 'exit';
   $('theme-options').hidden = mode !== 'theme';
   $('overlay').classList.toggle('theme-overlay', mode === 'theme');
+  $('overlay').classList.toggle('help-overlay', mode === 'help');
+  $('overlay').classList.toggle('companion-overlay', mode === 'companion');
   $('dialog-error').textContent = '';
   $('dialog-title').textContent = mode === 'search' ? 'Find your music' : 'Connect your Yamaha';
   $('dialog-description').textContent = mode === 'search' ? 'Search through your Yamaha’s existing music menu.' : 'Enter the Yamaha’s address on your home network. Set up streaming accounts through the MusicCast phone app.';
@@ -376,23 +554,58 @@ function openDialog(mode, item) {
   $('dialog-input').placeholder = mode === 'search' ? 'What would you like to hear?' : '192.168.1.20';
   $('dialog-input').inputMode = mode === 'search' ? 'text' : 'decimal';
   $('submit-dialog').textContent = mode === 'search' ? 'Search' : 'Connect';
+  $('qr-pairing').hidden = mode !== 'companion';
+  for (const id of ['input-label', 'dialog-input', 'submit-dialog']) $(id).hidden = false;
+  $('companion-fields').hidden = mode !== 'companion';
+  $('pair-companion').hidden = mode !== 'connect';
+  $('takeover-menu').hidden = !client?.companion || mode !== 'connect';
+  if (mode === 'companion') {
+    $('dialog-title').textContent = 'Connect phone + TV';
+    $('dialog-description').textContent = pairingCopy.tvQRBody;
+    $('input-label').textContent = 'Phone address';
+    $('dialog-input').value = 'http://'; $('dialog-input').placeholder = 'http://192.168.1.10:8095'; $('dialog-input').inputMode = 'url';
+    $('submit-dialog').textContent = 'Pair'; $('pairing-code').textContent = '';
+    $('refresh-qr').textContent = pairingCopy.newQRCode;
+    $('manual-pairing').textContent = pairingCopy.manualPairing;
+    $('retry-qr').textContent = pairingCopy.tvQRSave;
+    showPairingQR();
+  }
   $('use-demo').hidden = mode !== 'connect';
   if (mode === 'exit') {
     $('dialog-title').textContent = 'Leave Frame Music?';
     $('dialog-description').textContent = 'Your Yamaha will keep its current playback. You can reopen Frame Music any time.';
   }
   if (mode === 'theme') {
-    $('dialog-title').textContent = 'Choose your listening room';
-    $('dialog-description').textContent = 'Preview a style with OK. Your music stays as it is. Back returns to your screen.';
+    $('dialog-title').textContent = 'Appearance';
+    $('dialog-description').textContent = 'Glass layers song titles over the artwork. Choose a surface and a theme.';
   }
-  (mode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : mode === 'exit' ? $('cancel-exit') : $('dialog-input')).focus();
+  if (mode === 'help') {
+    $('dialog-title').textContent = 'Help';
+    $('dialog-description').textContent = 'Remote controls, playback and your connection.';
+  }
+  (mode === 'help' ? $('close-dialog') : mode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : mode === 'exit' ? $('cancel-exit') : mode === 'companion' ? $('refresh-qr') : $('dialog-input')).focus();
 }
 
 function closeDialog() {
+  qrInvitation = undefined; $('pairing-qr').removeAttribute('src');
+  stopCompanionSearch(); pendingPair = undefined; ++pairingAttempt;
+  client?.setActive?.(true);
   $('overlay').hidden = true;
   if (visibleControls().includes(priorFocus)) priorFocus.focus();
   else if (trackView) $('sources').focus();
   else ((sourceView ? $('source-list') : $('menu')).querySelector('button:not(:disabled)') || $('sources')).focus();
+}
+
+function savedMode() {
+  try { return localStorage.getItem('mosaicast-mode'); } catch { return; }
+}
+function saveMode(mode) {
+  try { localStorage.setItem('mosaicast-mode', mode); } catch { /* The current selection still works for this session. */ }
+}
+
+function rememberPairingMode() {
+  saveMode('companion');
+  if (savedMode() !== 'companion') throw new Error(pairingCopy.saveFailed);
 }
 
 function savedHost() {
@@ -401,8 +614,9 @@ function savedHost() {
   return privateIPv4(host) ? host : bundledYamahaHost;
 }
 
-async function connect(host, demo = false) {
-  const candidate = new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
+async function connect(host, demo = false, pairing) {
+  const candidate = pairing ? new FrameCompanion(pairing) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
+  try {
   const device = await candidate.request('system/getDeviceInfo');
   const capabilities = await candidate.request('system/getFeatures');
   const available = sources(capabilities);
@@ -414,8 +628,11 @@ async function connect(host, demo = false) {
   if (initial) { try { menu = await candidate.list(0, initial.id); } catch (error) { menuError = error.message; } }
   if (status.power === 'standby' && menu && !Number(menu.max_line)) menu = undefined;
   $('source-error').textContent = menuError ? `Deezer menu unavailable: ${menuError}` : '';
+  stopCompanionWatch?.();
+  client?.close?.();
   client = candidate; features = capabilities; isDemo = demo; prepared = false;
-  if (!demo) { try { localStorage.setItem('yamaha-host', host); } catch { /* Connection still works without storage. */ } }
+  if (!demo) saveMode(pairing ? 'companion' : 'direct');
+  if (!demo && !pairing) { try { localStorage.setItem('yamaha-host', host); } catch { /* Connection still works without storage. */ } }
   $('device-name').textContent = demo ? 'Preview mode' : device.model_name || 'Yamaha';
   $('connection-badge').textContent = demo ? '' : 'YAMAHA CONNECTED';
   $('connection-badge').hidden = demo;
@@ -424,16 +641,54 @@ async function connect(host, demo = false) {
   viewMemory.clear(); zoneMemory.clear(); menuParents.length = 0;
   renderPlayer(state.info, state.status); renderSound(status);
   if (menu) renderMenu(menu); else renderSources();
+  if (pairing) stopCompanionWatch = candidate.watch(observed => {
+    if (candidate !== client) return;
+    if (observed.snapshot) {
+      features = companionFeatures(observed.snapshot);
+      renderPlayer(companionInfo(observed.snapshot), companionStatus(observed.snapshot)); renderSound(companionStatus(observed.snapshot));
+    }
+    const state = candidate.controller.state;
+    const blocked = observed.stale || observed.needsRefresh;
+    $('connection-badge').textContent = blocked ? 'REFRESH CONNECTION' : state?.activity ? 'YAMAHA BUSY' : 'COMPANION CONNECTED';
+    if (blocked) {
+      for (const button of $('tuner-controls').querySelectorAll('button')) button.disabled = true;
+      tunerSignature = ''; // Re-enable only from a fresh observation after explicit recovery.
+      for (const id of ['power-on', 'power-off', 'previous', 'toggle-play', 'next', 'volume-up', 'volume-down', 'mute']) $(id).disabled = true;
+      message('Coordinator changed or an action needs checking. After a phone disconnect, wait one minute, then choose Refresh.', true);
+    }
+  });
   closeDialog();
   (menu ? $('menu') : $('source-list')).querySelector('button:not(:disabled)')?.focus();
+  } catch (error) { if (candidate !== client) candidate.close?.(); throw error; }
 }
 
+$('find-companions').onclick = () => { if (companionSearch) stopCompanionSearch(); else void searchCompanions(); };
+$('pair-companion').onclick = () => openDialog('companion');
+$('refresh-qr').onclick = showPairingQR;
+$('manual-pairing').onclick = () => {
+  stopCompanionSearch(); qrInvitation = undefined; pendingPair = undefined; ++pairingAttempt;
+  $('retry-qr').hidden = true; $('pairing-qr').removeAttribute('src');
+  manualPairing(true); $('dialog-input').focus(); void searchCompanions();
+};
+$('retry-qr').onclick = () => action(() => finishQRPairing($('retry-qr').dataset.url, qrInvitation, pairingAttempt));
+$('takeover-menu').onclick = () => action(async () => {
+  if (!browsingInput) throw new Error('Choose a music source first.');
+  const page = await client.list(0, browsingInput, true);
+  closeDialog(); menuParents.length = 0; renderMenu(page, 0);
+});
 $('settings').onclick = () => openDialog('connect');
 $('open-themes').onclick = () => openDialog('theme');
+$('help').onclick = () => openDialog('help');
+for (const topic of ['remote', 'playback', 'connection', 'artwork']) $(`help-${topic}`).onclick = () => {
+  for (const value of ['remote', 'playback', 'connection', 'artwork']) {
+    $(`help-section-${value}`).hidden = value !== topic;
+    $(`help-${value}`).setAttribute('aria-pressed', String(value === topic));
+  }
+};
 $('close-dialog').onclick = closeDialog;
 $('cancel-exit').onclick = closeDialog;
 $('confirm-exit').onclick = () => globalThis.tizen?.application?.getCurrentApplication().exit();
-$('use-demo').onclick = () => action(() => connect('', true));
+$('use-demo').onclick = () => action(async () => { await connect('', true); saveMode('demo'); });
 $('dialog-form').onsubmit = event => {
   event.preventDefault();
   const value = $('dialog-input').value.trim();
@@ -442,11 +697,32 @@ $('dialog-form').onsubmit = event => {
       if (!value) throw new Error('Enter something to search for.');
       const item = await ensurePrepared(searchEntry);
       rememberView();
-      const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0) };
+      const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0), selected: { index: item.index, text: item.text, attribute: item.attribute }, count: Number(list.max_line || 0) };
       await client.search(item.index, value);
       const results = await client.list(0, browsingInput);
       menuParents.push(parent); if (menuParents.length > 32) menuParents.shift();
       closeDialog(); renderMenu(results, 0);
+    } else if (dialogMode === 'companion') {
+      stopCompanionSearch();
+      if (!pendingPair || pendingPair.url !== value) {
+        // Stop standalone writes before granting the phone ownership.
+        client?.setActive?.(false);
+        if (client?.pending) throw new Error('Wait for the current Yamaha operation to finish.');
+        const attempt = ++pairingAttempt;
+        const pending = await pairFrame(value);
+        if (attempt !== pairingAttempt || $('overlay').hidden) return;
+        pendingPair = { ...pending, url: value };
+        $('pairing-code').textContent = pending.comparison;
+        $('dialog-description').textContent = 'Approve this same six-digit code on your iPhone, then choose The codes match here. If they differ, close and pair again.';
+        $('submit-dialog').textContent = 'The codes match';
+        return;
+      }
+      const attempt = pairingAttempt;
+      rememberPairingMode();
+      const pairing = await pendingPair.confirm();
+      saveMode('companion');
+      if (attempt !== pairingAttempt || $('overlay').hidden) return;
+      await connect(pairing.receiver, false, pairing);
     } else await connect(value);
   });
 };
@@ -458,17 +734,21 @@ $('home').onclick = () => action(async () => {
   for (let i = 0; Number(data.menu_layer) > 0 && i < 32; i++) { await client.control('return'); data = await client.list(0, browsingInput); }
   menuParents.length = 0; renderMenu(data, null);
 });
-for (const id of ['now-playing', 'open-track']) $(id).onclick = () => action(async () => { renderTrack(); await refreshPlayer(); });
+for (const id of ['now-playing', 'open-track']) $(id).onclick = () => {
+  ++viewEpoch; renderTrack();
+  if (!busy && !client.companion) void action(() => refreshPlayer());
+};
 $('lyrics-up').onclick = () => { $('lyrics').scrollTop -= $('lyrics').clientHeight * .8; };
 $('lyrics-down').onclick = () => { $('lyrics').scrollTop += $('lyrics').clientHeight * .8; };
-$('sources').onclick = () => action(async () => { await refreshPlayer(); renderSources(true); });
+$('sources').onclick = () => { ++viewEpoch; renderSources(true); };
 $('browse-sources').onclick = $('sources').onclick;
 $('refresh').onclick = () => action(async () => {
+  if (client?.companion) await client.reconcile();
   if (trackView) { await refreshPlayer(); return; }
   if (sourceView) { features = await client.request('system/getFeatures'); await refreshPlayer(); renderSources(); return; }
   renderMenu(await client.list(Number(list.index || 0), browsingInput), null); });
-$('page-prev').onclick = () => action(async () => renderMenu(await client.list(Math.max(0, Number(list.index || 0) - 8), browsingInput), Math.max(0, Number(list.index || 0) - 8)));
-$('page-next').onclick = () => action(async () => { const start = Number(list.index || 0) + 8; renderMenu(await client.list(start, browsingInput), start); });
+$('page-prev').onclick = () => action(() => pageMenu(-1));
+$('page-next').onclick = () => action(() => pageMenu(1));
 
 function playback(command) {
   return action(async () => {
@@ -508,7 +788,7 @@ function viewKey() {
   return trackView ? 'track' : sourceView || !list ? 'sources' : JSON.stringify([browsingInput, list.menu_layer, list.menu_name, list.index, list.list_info]);
 }
 
-function contentRoot() { return $(trackView ? 'lyrics-controls' : sourceView ? 'source-list' : 'menu'); }
+function contentRoot() { return $(trackView ? 'track-panel' : sourceView ? 'source-list' : 'menu'); }
 
 function rememberView() {
   const key = viewKey(), saved = viewMemory.get(key) || {};
@@ -545,7 +825,6 @@ function zoneFor(control) {
 
 function updatePreview(control) {
   $('preview-title').textContent = control?.dataset.title || 'No items available';
-  $('preview-action').textContent = control?.dataset.action || 'Try another source or refresh the menu.';
   $('preview-icon').textContent = icons[control?.dataset.title] || '♫';
 }
 
@@ -606,6 +885,8 @@ function moveFocus(dx, dy) {
 
 document.addEventListener('keydown', event => {
   const code = event.keyCode;
+  if (document.visibilityState !== 'visible') { heldArrow = undefined; return; }
+  if (![37, 38, 39, 40].includes(code)) heldArrow = undefined;
   const trackCommand = { 427: 'next', 428: 'previous' }[code];
   if (trackCommand) {
     if (document.visibilityState !== 'visible') return;
@@ -630,12 +911,29 @@ document.addEventListener('keydown', event => {
     event.preventDefault(); controls[next]?.focus(); return;
   }
   if (!$('overlay').hidden && !visibleControls().includes(document.activeElement)) {
-    event.preventDefault(); (dialogMode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : dialogMode === 'exit' ? $('cancel-exit') : $('dialog-input')).focus(); return;
+    event.preventDefault(); (dialogMode === 'help' ? $('close-dialog') : dialogMode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : dialogMode === 'exit' ? $('cancel-exit') : dialogMode === 'companion' ? $('refresh-qr') : $('dialog-input')).focus(); return;
   }
   if ([37, 38, 39, 40].includes(code)) {
     if (document.activeElement.tagName === 'INPUT' && (code === 37 || code === 39)) return;
     event.preventDefault();
     const now = event.timeStamp || Date.now();
+    if (!event.repeat) {
+      heldArrow = undefined;
+      const horizontal = code === 37 || code === 39;
+      if (!busy && $('overlay').hidden && !sourceView && !trackView && list && zoneFor(document.activeElement) === 'content' && (horizontal || isArtistFolder(list.menu_name) || artistParent())) {
+        heldArrow = { code, start: now, view: viewKey(), horizontal, selected: isArtistFolder(list.menu_name) ? entries(list).find(item => String(item.index) === String(document.activeElement.dataset.index)) : undefined };
+      }
+    } else if (heldArrow?.code === code) {
+      if (heldArrow.fired) return;
+      if (viewKey() !== heldArrow.view || !$('overlay').hidden) { heldArrow = undefined; return; }
+      if (now - heldArrow.start >= 550) {
+        heldArrow.fired = true;
+        const direction = code === 37 || code === 38 ? -1 : 1;
+        const { horizontal, selected } = heldArrow;
+        action(() => horizontal ? pageMenu(direction) : adjacentArtist(direction, selected));
+      }
+      return;
+    }
     if (event.repeat && code === lastArrow && now - lastArrowTime < 110) return;
     lastArrow = code; lastArrowTime = now;
     moveFocus(code === 37 ? -1 : code === 39 ? 1 : 0, code === 38 ? -1 : code === 40 ? 1 : 0); return;
@@ -648,6 +946,19 @@ document.addEventListener('keydown', event => {
     if (item?.play) action(() => activate(item, 'play')); else playback('play');
   } else if (code === 10252 || (event.key === ' ' && !['INPUT', 'BUTTON'].includes(document.activeElement.tagName))) { event.preventDefault(); playback('play_pause'); }
   else if ({ 19: 'pause', 413: 'stop', 10232: 'previous', 10233: 'next' }[code]) { event.preventDefault(); playback({ 19: 'pause', 413: 'stop', 10232: 'previous', 10233: 'next' }[code]); }
+});
+
+document.addEventListener('keyup', event => { if (heldArrow?.code === event.keyCode) heldArrow = undefined; });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') {
+    stopCompanionSearch();
+    if (qrInvitation) {
+      ++pairingAttempt; pendingPair = undefined; qrInvitation = undefined;
+      $('pairing-qr').removeAttribute('src'); $('retry-qr').hidden = true;
+      $('qr-status').textContent = pairingCopy.tvQRExpired;
+    }
+  }
+  heldArrow = undefined; client?.setActive?.(document.visibilityState === 'visible');
 });
 
 if (globalThis.tizen?.tvinputdevice) {
@@ -664,7 +975,7 @@ if (globalThis.tizen?.tvinputdevice) {
 }
 
 setInterval(() => {
-  if (client && !busy && !client.pending && document.visibilityState === 'visible' && $('overlay').hidden) {
+  if (client && !client.companion && !busy && !client.pending && document.visibilityState === 'visible' && $('overlay').hidden) {
     const current = client;
     playerState(current).then(({info, status}) => {
       if (client === current) { renderPlayer(info, status); renderSound(status); }
@@ -672,19 +983,22 @@ setInterval(() => {
   }
 }, 10000);
 
-const initialHost = savedHost();
+let initialMode = savedMode(), initialPairing, pairingLoadError;
+try { if (initialMode !== 'demo' && initialMode !== 'direct') { initialPairing = savedCompanion(); if (initialPairing) initialMode = 'companion'; } }
+catch (error) { pairingLoadError = error; }
+const initialHost = initialMode === 'demo' ? '' : initialMode === 'companion' ? initialPairing?.receiver : savedHost();
 await action(async () => {
+  if (pairingLoadError) { await connect('', true); throw pairingLoadError; }
   if (!initialHost) { await connect('', true); return; }
-  message(`Reconnecting to Yamaha at ${initialHost}…`);
-  try { await connect(initialHost); }
+  try { await connect(initialHost, false, initialPairing); }
   catch (error) {
     // Keep controls usable and retain the saved address for Retry or correction.
     await connect('', true);
     throw error;
   }
 });
-if (initialHost && isDemo) {
+if ((initialHost || initialMode === 'companion' || pairingLoadError) && isDemo) {
   const error = $('message').textContent;
   openDialog('connect');
-  $('dialog-error').textContent = `Could not reconnect to Yamaha. ${error}`;
+  $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check Wi-Fi and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;
 }
