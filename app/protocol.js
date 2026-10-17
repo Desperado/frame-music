@@ -52,8 +52,8 @@ export const sourceName = id => sourceNames[id] || String(id || 'Yamaha').replac
 export function sources(features) {
   const main = features.zone?.find(zone => zone.id === 'main');
   return (features.system?.input_list || []).filter(source => input(source.id) && main?.input_list?.includes(source.id)).map(source => ({
-    id: source.id, name: sourceName(source.id), type: source.play_info_type || 'none', browse: source.play_info_type === 'netusb' && browsable.includes(source.id),
-    description: ['airplay', 'spotify'].includes(source.id) ? 'Send music from your phone or laptop' : source.id === 'bluetooth' ? 'Pair using MusicCast or the Yamaha remote' : source.id === 'mc_link' ? 'Set up rooms in MusicCast' : ['cd', 'tuner'].includes(source.id) ? 'Playback controls on the Yamaha remote' : ['digital', 'aux'].includes(source.id) ? 'Audio from a connected external device' : browsable.includes(source.id) ? 'Browse the Yamaha’s music menu' : 'Source controls through MusicCast or the Yamaha remote'
+    id: source.id, name: sourceName(source.id), type: source.play_info_type || 'none', browse: source.play_info_type === 'netusb' && browsable.includes(source.id) && source.browsable !== false,
+    description: ['airplay', 'spotify'].includes(source.id) ? 'Send music from your phone or laptop' : source.id === 'bluetooth' ? 'Pair using MusicCast or the Yamaha remote' : source.id === 'mc_link' ? 'Set up rooms in MusicCast' : ['cd', 'tuner'].includes(source.id) ? 'Playback controls on the Yamaha remote' : ['digital', 'aux'].includes(source.id) ? 'Audio from a connected external device' : browsable.includes(source.id) && source.browsable !== false ? 'Browse the Yamaha’s music menu' : 'Source controls through MusicCast or the Yamaha remote'
   }));
 }
 

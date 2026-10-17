@@ -22,3 +22,5 @@ app/THIRD_PARTY_NOTICES.md
 certificates/
 .sign/
 profiles.xml
+packages/musiccast/dist/
+app/licenses/

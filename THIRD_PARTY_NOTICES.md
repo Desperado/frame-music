@@ -13,7 +13,18 @@ Frame Music's original source, documentation, app icon, receiver illustration, i
 | [actions/checkout](https://github.com/actions/checkout) | Checks out the repository in GitHub CI. | [MIT](https://github.com/actions/checkout/blob/main/LICENSE) | CI reference only. |
 | [actions/setup-node](https://github.com/actions/setup-node) | Selects Node.js in GitHub CI. | [MIT](https://github.com/actions/setup-node/blob/main/LICENSE) | CI reference only. |
 
-There are no npm runtime or development dependencies and no frontend framework. Imports in application code refer to local modules; scripts and tests use Node built-ins. API endpoint names and device capabilities describe interoperability with Yamaha hardware.
+The TV bundle includes the MIT Mosaicast shared protocol and noble cryptography packages below. There is no frontend framework. The build stages their full MIT copyright and permission notices in `app/licenses/`; retain those files when packaging the widget. API endpoint names and device capabilities describe interoperability with Yamaha hardware.
+
+## Bundled code and build dependencies
+
+| Material | Pinned source | License and distribution |
+| --- | --- | --- |
+| Mosaicast shared protocol and Frame adapter/UI | [Mosaicast revision 5f63586](https://github.com/Desperado/mosaicast/commit/5f6358609f84db45a258ed8c24c206346d7099e3); [adaptations](docs/integration-provenance.md) | MIT; full notice in [packages/musiccast/LICENSE](packages/musiccast/LICENSE), staged as `app/licenses/mosaicast-MIT.txt`. |
+| `@noble/ciphers` | [1.3.0](https://github.com/paulmillr/noble-ciphers/tree/1.3.0) | MIT; bundled, full upstream notice staged as `app/licenses/noble-ciphers-MIT.txt`. |
+| `@noble/curves` | [1.9.7](https://github.com/paulmillr/noble-curves/tree/1.9.7) | MIT; bundled, full upstream notice staged as `app/licenses/noble-curves-MIT.txt`. |
+| `@noble/hashes` | [1.8.0](https://github.com/paulmillr/noble-hashes/tree/1.8.0) | MIT; bundled, full upstream notice staged as `app/licenses/noble-hashes-MIT.txt`. |
+| esbuild | [0.28.2](https://github.com/evanw/esbuild/tree/v0.28.2) | MIT; build tool, not shipped in the TV widget. Installed package retains `LICENSE.md`. |
+| TypeScript | [6.0.3](https://github.com/microsoft/TypeScript/tree/v6.0.3) | Apache-2.0; development tool, not shipped in the TV widget. Installed package retains `LICENSE.txt` and `ThirdPartyNoticeText.txt`. |
 
 ## Bundled fonts
 

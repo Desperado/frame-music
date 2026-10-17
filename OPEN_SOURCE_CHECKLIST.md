@@ -23,14 +23,14 @@ Published on 2026-10-17 in a separate public repository, [Desperado/frame-music]
 
 ## For every release
 
-- [ ] Review the change and connected code for correctness, security, device side effects and unnecessary complexity. Run `npm test` and `npm run build` from a clean checkout; require CI success.
+- [ ] Review the change and connected code for correctness, security, device side effects and unnecessary complexity. Run `npm ci` and `npm run check` from a clean checkout; require CI success.
 - [ ] Test the changed UI with the TV remote or keyboard. Report tested hardware, firmware and browsers, and state any unverified physical-device behavior. CI does not validate signing or installation on a TV.
 - [ ] Update [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for new dependencies, copied code, services and assets. Record exact versions or source revisions for new vendored material, check license compatibility and retain required full license texts.
-- [ ] Build the generic app without `--yamaha-host`. `npm run build` stages the root `LICENSE` and `THIRD_PARTY_NOTICES.md` in `app/` automatically so Tizen packages include them alongside `fonts/*-OFL.txt`. Retain these notices in any distributed source or binary package; regenerate them when the root notices change.
+- [ ] Build the generic app without `--yamaha-host`. `npm run build` stages the root `LICENSE` and `THIRD_PARTY_NOTICES.md` in `app/` automatically so Tizen packages include them alongside `fonts/*-OFL.txt` and `licenses/*-MIT.txt`. Retain these notices in any distributed source or binary package; regenerate them when the root notices change.
 - [ ] Sign locally with your own certificates. Never include certificates, private keys, signing passwords, signature intermediates or personalised packages in source or public build artifacts. Do not use a maintainer's signing identity for untrusted contributor builds.
 - [ ] Update the version in both `package.json` and `app/config.xml` when cutting a versioned app release. Create a tag and release notes describing changes, known limitations, installation and license notices. Do not promise a support period you cannot maintain.
 - [ ] Recheck upstream service terms, asset permissions and privacy disclosures when integrations change. Open source licensing does not grant subscriptions, access to music catalogs, logo rights or permissions to redistribute media.
 
 ## Ongoing maintenance
 
-Review security reports privately, keep contributor guidance accurate, and triage issues with reproducible evidence. Keep CI action pins current. If dependencies are added, introduce a lockfile and dependency update/security checks appropriate to that ecosystem. There is currently no npm dependency tree to maintain.
+Review security reports privately, keep contributor guidance accurate, and triage issues with reproducible evidence. Keep CI action pins current. Keep the pinned npm lockfile, Dependabot updates and dependency security checks current.
