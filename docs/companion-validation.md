@@ -13,7 +13,8 @@ No signed widget, TV installation or physical pairing was tested for this port.
 
 Run `npm ci` then `npm run check`. Coverage includes:
 
-- Two-sided comparison approval, commitment tampering, secure-save failure,
+- QR pairing/restart, alternate-slot saving and readback failure, lost save
+  acknowledgement and explicit retry; two-sided comparison approval, commitment tampering,
   authenticated encryption, direction/session/counter checks and replay rejection.
 - Phone authority expiry, fencing immediately before device writes, slow-menu
   heartbeats, lost handoff/action replies, delayed TV takeover and explicit Refresh.
@@ -30,8 +31,11 @@ a signed Tizen app built from this repository, and the actual Yamaha on the same
 Keep listening volume low for deliberate playback checks. Record model/firmware,
 app builds and observed outcomes without recording pairing keys or envelopes.
 
-- Pair with matching codes approved on both screens. Reject a mismatch. Verify
-  Key Manager persistence after TV restart and safe failure if storage is unavailable.
+- Pair by scanning the TV QR with Mosaicast Dev 12+. Restart both apps and
+  verify reconnection without scanning. Test expired QR and storage/readback failure.
+  Confirm the old TV record survives a failed replacement, and no Yamaha command
+  repeats when retrying a lost save acknowledgement. Also test address pairing
+  with matching codes approved on both screens and reject a mismatch.
 - Discover the phone automatically; test manual address entry and a phone DHCP
   address change. Check local-network permissions and router isolation failures.
 - With both apps visible, confirm shared observations and a single explicit

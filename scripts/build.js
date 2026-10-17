@@ -8,12 +8,12 @@ import { privateIPv4 } from '../app/protocol.js';
 export async function buildApp(defaultHost = '') {
   if (defaultHost !== '' && !privateIPv4(defaultHost)) throw new Error('The Yamaha preset must be a private IPv4 address.');
   const shared = await build({
-    stdin: { contents: "export { createTVPeerController } from './peer-controller'; export { beginPeerPairing, validPeer } from './peer'; export { privateIPv4 } from './parsers'; export { discoverPeers } from './discovery'; export { canBrowseSource } from './browsing';", resolveDir: fileURLToPath(new URL('../packages/musiccast/src/', import.meta.url)), loader: 'ts' },
+    stdin: { contents: "export { createTVPeerController } from './peer-controller'; export { beginPeerPairing, beginQRPairing, createPeerInvitation, validPeer } from './peer'; export { privateIPv4 } from './parsers'; export { discoverPeers } from './discovery'; export { canBrowseSource } from './browsing'; export { default as qrcode } from 'qrcode-generator'; export { en, uk } from '../../../app/pairing-copy.js';", resolveDir: fileURLToPath(new URL('../packages/musiccast/src/', import.meta.url)), loader: 'ts' },
     bundle: true, format: 'iife', globalName: 'companionAPI', target: 'chrome85', write: false,
   });
   const files = ['companion.js', 'protocol.js', 'metadata.js', 'artist-scene.js', 'demo.js', 'app.js'];
   const sources = await Promise.all(files.map(name => readFile(new URL(`../app/${name}`, import.meta.url), 'utf8')));
-  return `(async function () {\n'use strict';\nconst bundledYamahaHost = ${JSON.stringify(defaultHost)};\n${shared.outputFiles[0].text}\n${sources.map(source => source.replace(/^import .+ from .+;\n/gm, '').replace(/^export /gm, '')).join('\n')}\n})();\n`;
+  return `(async function () {\n'use strict';\nconst bundledYamahaHost = ${JSON.stringify(defaultHost)};\n${shared.outputFiles[0].text}\nconst qrcode = companionAPI.qrcode; const { en, uk } = companionAPI;\n${sources.map(source => source.replace(/^import .+ from .+;\n/gm, '').replace(/^export /gm, '')).join('\n')}\n})();\n`;
 }
 
 export async function stageLicenses(destination = new URL('../app/', import.meta.url)) {
@@ -21,6 +21,7 @@ export async function stageLicenses(destination = new URL('../app/', import.meta
   for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
     await copyFile(new URL(`../${name}`, import.meta.url), new URL(name, destination));
   }
+  await copyFile(new URL('../licenses/qrcode-generator.txt', import.meta.url), new URL('licenses/qrcode-generator.txt', destination));
   await copyFile(new URL('../packages/musiccast/LICENSE', import.meta.url), new URL('licenses/mosaicast-MIT.txt', destination));
   for (const name of ['ciphers', 'curves', 'hashes']) {
     await copyFile(new URL(`../node_modules/@noble/${name}/LICENSE`, import.meta.url), new URL(`licenses/noble-${name}-MIT.txt`, destination));

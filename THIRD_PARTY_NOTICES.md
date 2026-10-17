@@ -13,18 +13,17 @@ Frame Music's original source, documentation, app icon, receiver illustration, i
 | [actions/checkout](https://github.com/actions/checkout) | Checks out the repository in GitHub CI. | [MIT](https://github.com/actions/checkout/blob/main/LICENSE) | CI reference only. |
 | [actions/setup-node](https://github.com/actions/setup-node) | Selects Node.js in GitHub CI. | [MIT](https://github.com/actions/setup-node/blob/main/LICENSE) | CI reference only. |
 
-The TV bundle includes the MIT Mosaicast shared protocol and noble cryptography packages below. There is no frontend framework. The build stages their full MIT copyright and permission notices in `app/licenses/`; retain those files when packaging the widget. API endpoint names and device capabilities describe interoperability with Yamaha hardware.
+There is no frontend framework. Runtime dependencies are bundled into the generated classic TV script; no CDN is used.
 
-## Bundled code and build dependencies
-
-| Material | Pinned source | License and distribution |
+| Code / version | Purpose | License / distribution |
 | --- | --- | --- |
-| Mosaicast shared protocol and Frame adapter/UI | [Mosaicast revision 5f63586](https://github.com/Desperado/mosaicast/commit/5f6358609f84db45a258ed8c24c206346d7099e3); [adaptations](docs/integration-provenance.md) | MIT; full notice in [packages/musiccast/LICENSE](packages/musiccast/LICENSE), staged as `app/licenses/mosaicast-MIT.txt`. |
-| `@noble/ciphers` | [1.3.0](https://github.com/paulmillr/noble-ciphers/tree/1.3.0) | MIT; bundled, full upstream notice staged as `app/licenses/noble-ciphers-MIT.txt`. |
-| `@noble/curves` | [1.9.7](https://github.com/paulmillr/noble-curves/tree/1.9.7) | MIT; bundled, full upstream notice staged as `app/licenses/noble-curves-MIT.txt`. |
-| `@noble/hashes` | [1.8.0](https://github.com/paulmillr/noble-hashes/tree/1.8.0) | MIT; bundled, full upstream notice staged as `app/licenses/noble-hashes-MIT.txt`. |
-| esbuild | [0.28.2](https://github.com/evanw/esbuild/tree/v0.28.2) | MIT; build tool, not shipped in the TV widget. Installed package retains `LICENSE.md`. |
-| TypeScript | [6.0.3](https://github.com/microsoft/TypeScript/tree/v6.0.3) | Apache-2.0; development tool, not shipped in the TV widget. Installed package retains `LICENSE.txt` and `ThirdPartyNoticeText.txt`. |
+| Mosaicast `@mosaicast/musiccast` 0.1.0, revision `bb7372b71a69fb75df28b7bb76afa2d2e740f1b0` | Vendored local device adapter, authenticated phone/TV coordination and QR pairing protocol | MIT, Mosaicast contributors; [source notice](packages/musiccast/LICENSE), [provenance](packages/musiccast/README.md). Used TV code is bundled; tests are development only. |
+| [qrcode-generator 2.0.4](https://github.com/kazuhikoarase/qrcode-generator) | Offline QR rendering | MIT, Kazuhiko Arase. Bundled; generated `app/licenses/qrcode-generator.txt` retains the upstream MIT license (blob `150770c0fc2994865ccdbef6662735cc083e780d`). |
+| [@noble/ciphers 1.3.0](https://github.com/paulmillr/noble-ciphers), [@noble/curves 1.9.7](https://github.com/paulmillr/noble-curves), [@noble/hashes 1.8.0](https://github.com/paulmillr/noble-hashes) | Authenticated encryption, key exchange and derivation | MIT, Paul Miller and contributors. Used code is bundled; generated `app/licenses/noble-*-MIT.txt` retain the npm licenses. |
+| [esbuild 0.28.2](https://github.com/evanw/esbuild) | Bundle the TV script | MIT; development only, installed separately. |
+| [TypeScript 6.0.3](https://github.com/microsoft/TypeScript) | Check and compile the vendored package | Apache-2.0; development only, installed separately. |
+
+`npm run build` copies the shipped MIT notices into `app/licenses/`, including `mosaicast-MIT.txt`. Keep these files in the packaged widget. API endpoint names and device capabilities describe interoperability with Yamaha hardware.
 
 ## Bundled fonts
 

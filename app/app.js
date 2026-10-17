@@ -1,4 +1,4 @@
-import { FrameCompanion, findFrameCompanions, pairFrame, savedCompanion, companionFeatures, companionStatus, companionInfo, companionTuner } from './companion.js';
+import { FrameCompanion, findFrameCompanions, pairFrame, frameInvitation, savedCompanion, companionFeatures, companionStatus, companionInfo, companionTuner } from './companion.js';
 import { MusicCast, transport, entries, soundControls, sources, sourceName, deviceCapabilities, privateIPv4 } from './protocol.js';
 import { demoTransport } from './demo.js';
 import { LyricsLoader, artworkUrl, trackKey } from './metadata.js';
@@ -454,8 +454,60 @@ async function back() {
   else message('You’re at the home menu.');
 }
 
-let companionSearch, pendingPair, pairingAttempt = 0;
+const pairingCopy = companionAPI[/^uk/.test(globalThis.navigator?.language || '') ? 'uk' : 'en'];
+let companionSearch, pendingPair, qrInvitation, qrSearchTimer, pairingAttempt = 0;
+function manualPairing(visible) {
+  for (const id of ['input-label', 'dialog-input', 'submit-dialog', 'companion-fields']) $(id).hidden = !visible;
+}
+async function finishQRPairing(url, invitation, attempt) {
+  client?.setActive?.(false);
+  if (client?.pending) throw new Error('Wait for the current Yamaha operation to finish.');
+  $('retry-qr').hidden = false;
+  if (!pendingPair) {
+    const pending = await pairFrame(url, invitation);
+    if (attempt !== pairingAttempt || $('overlay').hidden) return;
+    pendingPair = { ...pending, url };
+  }
+  $('retry-qr').hidden = false;
+  rememberPairingMode();
+  const pairing = await pendingPair.confirm();
+  // A closed dialog must still remember a completed save, without changing its screen.
+  saveMode('companion');
+  if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  $('qr-status').textContent = pairingCopy.tvQRSaved;
+  await connect(pairing.receiver, false, pairing);
+}
+async function searchQRPhone(attempt) {
+  if (attempt !== pairingAttempt || !qrInvitation || $('overlay').hidden) return;
+  if (qrInvitation.expires <= Date.now()) { $('qr-status').textContent = pairingCopy.tvQRExpired; $('pairing-qr').removeAttribute('src'); return; }
+  const search = new AbortController(); companionSearch = search;
+  let phone;
+  try {
+    await findFrameCompanions(search.signal, device => {
+      if (device.invitation === qrInvitation.id) { phone = device.url; search.abort(); }
+    });
+  } catch { /* Manual pairing remains available if discovery is denied. */ }
+  finally { if (companionSearch === search) companionSearch = undefined; }
+  if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  if (phone && !busy) {
+    $('retry-qr').dataset.url = phone;
+    await action(() => finishQRPairing(phone, qrInvitation, attempt));
+  } else {
+    qrSearchTimer = setTimeout(() => { void searchQRPhone(attempt); }, 2000);
+    qrSearchTimer?.unref?.();
+  }
+}
+function showPairingQR() {
+  stopCompanionSearch(); pendingPair = undefined; const attempt = ++pairingAttempt;
+  manualPairing(false); $('retry-qr').hidden = true; $('dialog-error').textContent = '';
+  try {
+    const code = frameInvitation(savedHost()); qrInvitation = code.invitation;
+    $('pairing-qr').src = code.image; $('qr-status').textContent = pairingCopy.tvQRWaiting;
+    void searchQRPhone(attempt);
+  } catch (error) { $('dialog-error').textContent = error.message; }
+}
 function stopCompanionSearch() {
+  clearTimeout(qrSearchTimer); qrSearchTimer = undefined;
   companionSearch?.abort(); companionSearch = undefined;
   $('find-companions').textContent = 'Search again';
 }
@@ -502,16 +554,21 @@ function openDialog(mode, item) {
   $('dialog-input').placeholder = mode === 'search' ? 'What would you like to hear?' : '192.168.1.20';
   $('dialog-input').inputMode = mode === 'search' ? 'text' : 'decimal';
   $('submit-dialog').textContent = mode === 'search' ? 'Search' : 'Connect';
+  $('qr-pairing').hidden = mode !== 'companion';
+  for (const id of ['input-label', 'dialog-input', 'submit-dialog']) $(id).hidden = false;
   $('companion-fields').hidden = mode !== 'companion';
   $('pair-companion').hidden = mode !== 'connect';
   $('takeover-menu').hidden = !client?.companion || mode !== 'connect';
   if (mode === 'companion') {
     $('dialog-title').textContent = 'Connect phone + TV';
-    $('dialog-description').textContent = 'Open Connect phone + TV on your iPhone and connect Yamaha. Choose the phone below. Compare and approve the six digits on both screens. No computer needed.';
+    $('dialog-description').textContent = pairingCopy.tvQRBody;
     $('input-label').textContent = 'Phone address';
     $('dialog-input').value = 'http://'; $('dialog-input').placeholder = 'http://192.168.1.10:8095'; $('dialog-input').inputMode = 'url';
     $('submit-dialog').textContent = 'Pair'; $('pairing-code').textContent = '';
-    void searchCompanions();
+    $('refresh-qr').textContent = pairingCopy.newQRCode;
+    $('manual-pairing').textContent = pairingCopy.manualPairing;
+    $('retry-qr').textContent = pairingCopy.tvQRSave;
+    showPairingQR();
   }
   $('use-demo').hidden = mode !== 'connect';
   if (mode === 'exit') {
@@ -526,10 +583,11 @@ function openDialog(mode, item) {
     $('dialog-title').textContent = 'Help';
     $('dialog-description').textContent = 'Remote controls, playback and your connection.';
   }
-  (mode === 'help' ? $('close-dialog') : mode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : mode === 'exit' ? $('cancel-exit') : $('dialog-input')).focus();
+  (mode === 'help' ? $('close-dialog') : mode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : mode === 'exit' ? $('cancel-exit') : mode === 'companion' ? $('refresh-qr') : $('dialog-input')).focus();
 }
 
 function closeDialog() {
+  qrInvitation = undefined; $('pairing-qr').removeAttribute('src');
   stopCompanionSearch(); pendingPair = undefined; ++pairingAttempt;
   client?.setActive?.(document.visibilityState === 'visible');
   $('overlay').hidden = true;
@@ -543,6 +601,11 @@ function savedMode() {
 }
 function saveMode(mode) {
   try { localStorage.setItem('mosaicast-mode', mode); } catch { /* The current selection still works for this session. */ }
+}
+
+function rememberPairingMode() {
+  saveMode('companion');
+  if (savedMode() !== 'companion') throw new Error(pairingCopy.saveFailed);
 }
 
 function savedHost() {
@@ -604,6 +667,13 @@ async function connect(host, demo = false, pairing) {
 
 $('find-companions').onclick = () => { if (companionSearch) stopCompanionSearch(); else void searchCompanions(); };
 $('pair-companion').onclick = () => openDialog('companion');
+$('refresh-qr').onclick = showPairingQR;
+$('manual-pairing').onclick = () => {
+  stopCompanionSearch(); qrInvitation = undefined; pendingPair = undefined; ++pairingAttempt;
+  $('retry-qr').hidden = true; $('pairing-qr').removeAttribute('src');
+  manualPairing(true); $('dialog-input').focus(); void searchCompanions();
+};
+$('retry-qr').onclick = () => action(() => finishQRPairing($('retry-qr').dataset.url, qrInvitation, pairingAttempt));
 $('takeover-menu').onclick = () => action(async () => {
   if (!browsingInput) throw new Error('Choose a music source first.');
   const page = await client.list(0, browsingInput, true);
@@ -651,7 +721,9 @@ $('dialog-form').onsubmit = event => {
         return;
       }
       const attempt = pairingAttempt;
+      rememberPairingMode();
       const pairing = await pendingPair.confirm();
+      saveMode('companion');
       if (attempt !== pairingAttempt || $('overlay').hidden) return;
       await connect(pairing.receiver, false, pairing);
     } else await connect(value);
@@ -867,7 +939,7 @@ document.addEventListener('keydown', event => {
     event.preventDefault(); controls[next]?.focus(); return;
   }
   if (!$('overlay').hidden && !visibleControls().includes(document.activeElement)) {
-    event.preventDefault(); (dialogMode === 'help' ? $('close-dialog') : dialogMode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : dialogMode === 'exit' ? $('cancel-exit') : $('dialog-input')).focus(); return;
+    event.preventDefault(); (dialogMode === 'help' ? $('close-dialog') : dialogMode === 'theme' ? $(`theme-${document.documentElement.dataset.theme}`) : dialogMode === 'exit' ? $('cancel-exit') : dialogMode === 'companion' ? $('refresh-qr') : $('dialog-input')).focus(); return;
   }
   if ([37, 38, 39, 40].includes(code)) {
     if (document.activeElement.tagName === 'INPUT' && (code === 37 || code === 39)) return;
@@ -898,9 +970,16 @@ document.addEventListener('keydown', event => {
 
 document.addEventListener('keyup', event => { if (pressedArrow === event.keyCode) { clearHeldArrow(); pressedArrow = undefined; } });
 document.addEventListener('visibilitychange', () => {
-  const active = document.visibilityState === 'visible';
-  if (!active) stopCompanionSearch();
+  if (document.visibilityState !== 'visible') {
+    stopCompanionSearch();
+    if (qrInvitation) {
+      ++pairingAttempt; pendingPair = undefined; qrInvitation = undefined;
+      $('pairing-qr').removeAttribute('src'); $('retry-qr').hidden = true;
+      $('qr-status').textContent = pairingCopy.tvQRExpired;
+    }
+  }
   clearHeldArrow(); pressedArrow = undefined;
+  const active = document.visibilityState === 'visible';
   client?.setActive?.(active);
   if (connectingClient !== client) connectingClient?.setActive?.(active);
 });
@@ -927,10 +1006,12 @@ setInterval(() => {
   }
 }, 10000);
 
-const initialMode = savedMode();
-const initialPairing = initialMode === 'companion' ? savedCompanion() : undefined;
+let initialMode = savedMode(), initialPairing, pairingLoadError;
+try { if (initialMode !== 'demo' && initialMode !== 'direct') { initialPairing = savedCompanion(); if (initialPairing) initialMode = 'companion'; } }
+catch (error) { pairingLoadError = error; }
 const initialHost = initialMode === 'demo' ? '' : initialMode === 'companion' ? initialPairing?.receiver : savedHost();
 await action(async () => {
+  if (pairingLoadError) { await connect('', true); throw pairingLoadError; }
   if (!initialHost) { await connect('', true); return; }
   try { await connect(initialHost, false, initialPairing); }
   catch (error) {
@@ -939,7 +1020,7 @@ await action(async () => {
     throw error;
   }
 });
-if ((initialHost || initialMode === 'companion') && isDemo) {
+if ((initialHost || initialMode === 'companion' || pairingLoadError) && isDemo) {
   const error = $('message').textContent;
   openDialog('connect');
   $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check Wi-Fi and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;

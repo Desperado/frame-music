@@ -4,6 +4,10 @@ Imported from [Desperado/mosaicast](https://github.com/Desperado/mosaicast) at
 [`5f6358609f84db45a258ed8c24c206346d7099e3`](https://github.com/Desperado/mosaicast/commit/5f6358609f84db45a258ed8c24c206346d7099e3),
 after the paired Frame integration (PR #12) and Bluetooth support (PR #13) merged.
 
+QR pairing and verified secure saving update the shared snapshot to
+`bb7372b71a69fb75df28b7bb76afa2d2e740f1b0` (Mosaicast Dev build 12). See
+[the shared package provenance](../packages/musiccast/README.md).
+
 ## Imported scope
 
 - `apps/frame/app/companion.js`, its connected UI, themes, manifest and tests.
@@ -27,7 +31,7 @@ uses the real encrypted phone service with synthetic pairing data.
 ## Compatibility
 
 `packages/musiccast/src`, its tests, `package.json` and `tsconfig.json` are copied
-verbatim from the pinned commit. Keep them synchronized with Mosaicast when
+verbatim from the newer QR snapshot above. Keep them synchronized with Mosaicast when
 updating. Do not copy only peer transport files: command validation, Bluetooth
 state, coordinator behavior, leases and uncertainty handling form one protocol.
 No React Native dependencies are imported. Generated `dist/` and `app/bundle.js`

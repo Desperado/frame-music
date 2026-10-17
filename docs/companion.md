@@ -8,21 +8,28 @@ the audio through its existing accounts.
 
 ## Pair once
 
-1. Install a new iPhone native build containing `MosaicastPeer` and SecureStore,
-   and the newly built TV app. Expo Go, the web phone preview and older iPhone
-   builds without `MosaicastPeer` do not contain the native listener. See the
-   [Mosaicast native-build guide](https://github.com/Desperado/mosaicast/blob/5f6358609f84db45a258ed8c24c206346d7099e3/docs/native-builds.md).
-2. Put iPhone, TV and Yamaha on the same private Wi-Fi network. On iPhone choose
-   **Connection → Connect phone + TV**, enter Yamaha's private IPv4 address and
-   connect. Leave the phone app open; its local address appears on screen.
-3. On TV choose **Connection → Connect phone + TV**. It automatically searches
-   for the phone. Choose its address, or enter `http://PHONE_IP:8095` manually.
-4. Compare the six digits on both screens. Approve on the phone, then confirm on
-   the TV only if they match. Choose Refresh before sending device commands.
+1. Install Mosaicast Dev build 12 or newer and the newly built TV app. Expo Go
+   and the phone web preview cannot host the native coordinator.
+2. Put iPhone, TV and Yamaha on the same private Wi-Fi network. On TV choose
+   **Connection → Connect phone + TV** to show its five-minute QR code.
+3. On iPhone choose **Connect phone + TV**, scan the TV code and enter Yamaha's
+   private IPv4 address if requested. Keep both apps open until saving finishes.
+4. Choose **Refresh** on the TV before sending receiver commands. Saved pairs
+   reconnect after both apps restart without another scan.
+
+For address pairing, choose **Connect using an address** on TV, select the
+phone or enter `http://PHONE_IP:8095`, compare all six digits and approve on both
+screens. A mismatch means cancel pairing. This remains an explicit fallback.
+
+Українською: на TV відкрийте **Connection → Connect phone + TV**, а в Mosaicast
+Dev 12+ на iPhone — **Телефон + TV**, та скануйте код. За потреби введіть адресу
+Yamaha. Дочекайтеся збереження на обох пристроях і натисніть **Refresh** на TV.
+Після перезапуску повторне сканування не потрібне. Підключення за адресою
+залишається запасним способом із порівнянням шести цифр на обох екранах.
 
 The TV searches its private `/24`, with 12 read-only probes at a time and a
 1.2-second timeout per address. Discovery reveals only a service/version, address
-and random boot identifier. It does not pair or issue Yamaha commands. After
+and random boot identifier, plus the active invitation identifier during QR setup. The QR secret is never advertised. It does not pair or issue Yamaha commands. After
 pairing the TV tries the saved phone address and searches every 30 seconds while
 active, so a changed phone IP can be found without pairing again. The phone sees
 its TV through the authenticated connection; it does not scan for a TV listener.
@@ -66,14 +73,17 @@ shared ownership, so do not use it concurrently with peer mode for coordinated m
 The iPhone uses a foreground-only native Network.framework HTTP listener bound
 to its private Wi-Fi IPv4 on port 8095. It accepts bounded JSON peer requests,
 not arbitrary proxy or device routes. No certificate or computer is needed.
-Discovery is public and untrusted. Pairing uses committed X25519 key exchange,
-HKDF-SHA256 and a six-digit comparison approved on both screens. Compare all digits;
-a mismatch means cancel pairing. Commands and snapshots use authenticated
+Discovery is public and untrusted. QR pairing uses a random secret shown only
+in the TV code and derives a key bound to the phone boot using HKDF-SHA256.
+Address pairing uses committed X25519 exchange and a six-digit comparison
+approved on both screens. Commands and snapshots use authenticated
 XChaCha20-Poly1305 envelopes with direction, session, boot and counter checks.
 The network sees addresses, timing and message sizes; application contents are encrypted.
 
-Pairing keys live in iOS SecureStore and Tizen Key Manager. A failed secure save
-fails pairing. Browser TV previews keep keys in memory and need pairing after
+Pairing keys live in iOS SecureStore and Tizen Key Manager. The TV writes an
+alternate slot and reads it back before the phone saves and verifies its own
+record. Failed replacement leaves the previous TV record intact. Saving errors
+stay visible; explicit Try again repeats confirmation without a Yamaha command. Browser TV previews keep keys in memory and need pairing after
 reload. Never put pairing records in localStorage, logs or source files. Re-pair
 to replace a TV. Uninstalling either app may require re-pairing.
 

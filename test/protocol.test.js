@@ -4,7 +4,7 @@ import { MusicCast, entries, privateIPv4, validateRequest, soundControls, source
 import { demoTransport } from '../app/demo.js';
 
 test('accept only canonical private IPv4 addresses, never arbitrary URLs or encoded hosts', () => {
-  for (const host of ['192.168.1.20', '10.0.0.4', '172.16.0.1', '172.31.255.254']) assert.equal(privateIPv4(host), true);
+  for (const host of ['192.168.188.194', '10.0.0.4', '172.16.0.1', '172.31.255.254']) assert.equal(privateIPv4(host), true);
   for (const host of ['127.0.0.1', '169.254.169.254', '8.8.8.8', '172.32.0.1', '192.168.1.256', '192.168.001.1', 'localhost', '192.168.1.1:80', '192.168.1.1@evil.com', '10.1.2.3/path']) assert.equal(privateIPv4(host), false);
 });
 

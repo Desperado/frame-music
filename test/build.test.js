@@ -15,6 +15,7 @@ test('the TV package includes complete project and runtime dependency notices', 
   const sources = {
     LICENSE: '../LICENSE',
     'THIRD_PARTY_NOTICES.md': '../THIRD_PARTY_NOTICES.md',
+    'licenses/qrcode-generator.txt': '../licenses/qrcode-generator.txt',
     'licenses/mosaicast-MIT.txt': '../packages/musiccast/LICENSE',
     ...Object.fromEntries(['ciphers', 'curves', 'hashes'].map(name => [
       `licenses/noble-${name}-MIT.txt`, `../node_modules/@noble/${name}/LICENSE`,
@@ -42,6 +43,7 @@ test('the packaged TV page carries its own policy: local scripts only, no plugin
   const policy = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)?.[1];
   assert.ok(policy, 'index.html must declare a CSP; the preview server header does not reach the TV');
   const directives = Object.fromEntries(policy.split(';').map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+  assert.ok(directives['img-src'].includes('data:'));
   assert.deepEqual(directives['script-src'], ["'self'"]);
   assert.deepEqual(directives['object-src'], ["'none'"]);
   assert.deepEqual(directives['base-uri'], ["'none'"]);

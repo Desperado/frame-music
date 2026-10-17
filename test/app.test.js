@@ -7,7 +7,7 @@ import shared from '../packages/musiccast/dist/index.js';
 import { randomBytes, webcrypto } from 'node:crypto';
 
 // Run the real TV bundle with a small DOM fixture. No device or browser is contacted.
-async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '', companionFetch, webapis, discoveryFetch, beforeStart } = {}) {
+async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '', companionFetch, webapis, discoveryFetch, beforeStart, onInvitation } = {}) {
   let document;
   const intervals = new Map();
   class Clock extends Date { static now() { return Date.now() + clock; } }
@@ -77,7 +77,7 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   Object.assign(remote, remoteState);
   const rootMenu = { layer: remote.layer, menu: remote.menu, items: remote.items };
   const context = createContext({
-    document, tizen, webapis, Date: Clock, URL, URLSearchParams, TextEncoder, TextDecoder, crypto: webcrypto, AbortController,
+    document, tizen, webapis, onInvitation, Date: Clock, URL, URLSearchParams, TextEncoder, TextDecoder, crypto: webcrypto, AbortController,
     setTimeout(callback, delay) { const id = ++timerId; timers.set(id, {callback, at: clock + delay}); return id; },
     clearTimeout(id) { timers.delete(id); },
     setInterval(callback) { const id = {}; intervals.set(id, callback); return id; }, clearInterval(id) { intervals.delete(id); },
@@ -114,7 +114,9 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   // Match the missing APIs on the declared minimum runtime, without patching Node globals.
   runInContext('Object.hasOwn = undefined', context);
   beforeStart?.(document);
-  await runInContext(await buildApp(defaultHost), context);
+  // Observe only in memory; never log or capture the invitation credential.
+  const bundle = (await buildApp(defaultHost)).replace('const code = frameInvitation(savedHost());', 'const code = frameInvitation(savedHost()); onInvitation?.(code);');
+  await runInContext(bundle, context);
   if (nodes.get('device-name').textContent === 'Preview mode') assert.equal(nodes.get('menu').children.length, 7, nodes.get('message').textContent);
   const key = (key, keyCode, shiftKey = false, repeat = false, timeStamp) => {
     if (timeStamp !== undefined) advance(timeStamp);
@@ -1286,9 +1288,12 @@ test('shared setup automatically discovers the coordinator without pairing, devi
       return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(String(url).includes('192.168.1.10:') ? { service: 'mosaicast-peer', version: 1, url: 'http://192.168.1.10:8095', epoch: randomBytes(16).toString('hex') } : {}) };
     } });
   app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  assert.equal(app.nodes.get('dialog-input').hidden, true);
+  assert.ok(app.nodes.get('pairing-qr').src.startsWith('data:image/svg+xml;'));
+  app.nodes.get('manual-pairing').click();
   const focused = app.document.activeElement;
   for (let i = 0; i < 3; i++) await app.settle();
-  assert.equal(requests.length, 253);
+  assert.equal(requests.length, 265);
   assert.ok(requests.every(({ options }) => options.method === 'GET' && !options.body && !options.headers));
   assert.equal(app.nodes.get('companion-results').children.length, 1);
   assert.equal(app.nodes.get('dialog-input').value, 'http://192.168.1.10:8095');
@@ -1308,5 +1313,56 @@ test('leaving shared setup cancels all discovery probes and ignores late results
   await app.settle();
   assert.equal(probes.length, 12);
   assert.equal(app.nodes.get('companion-results').children.length, 0);
+  assert.equal(app.nodes.get('overlay').hidden, true);
+});
+
+for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks phone confirmation when TV mode cannot persist' : 'pairs both devices and reconnects after TV restart'}`, async () => {
+  const records = new Map(), storage = new Map(); let phoneRecord, phoneSaves = 0;
+  const state = { model: 'Fixture', features: { sources: [{ id: 'cd', name: 'CD' }], controls: [], connectivity: [] }, status: { power: 'on', input: 'cd', volume: 10, mute: false }, trackUnavailable: false };
+  const coordinator = new shared.CompanionCoordinator({ read: async () => state }, 'fixture');
+  const phone = new shared.PhonePeerService('192.168.1.20', 'http://192.168.1.10:8095', coordinator, n => new Uint8Array(randomBytes(n)), undefined, async record => { phoneRecord = record; phoneSaves++; });
+  const missing = () => Object.assign(new Error('Missing'), { name: 'NotFoundError' });
+  const tizen = { keymanager: {
+    getData({ name }) { if (!records.has(name)) throw missing(); return records.get(name); },
+    removeData({ name }) { if (!records.delete(name)) throw missing(); },
+    saveData(name, raw, _password, success) { records.set(name, raw); success(); },
+  } };
+  const companionFetch = async (url, options = {}) => {
+    const value = String(url).includes('192.168.1.10:') ? await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined) : {};
+    return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(value) };
+  };
+  const app = await launch(tizen, { storage, storageUnavailable: unavailable, webapis: { network: { getIp: () => '192.168.1.30' } }, companionFetch,
+    onInvitation: code => phone.acceptInvitation(code.text) });
+  app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  for (let i = 0; i < 8; i++) await app.settle();
+  if (unavailable) {
+    assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
+    assert.match(app.nodes.get('dialog-error').textContent, /Could not save/);
+    assert.equal(app.nodes.get('retry-qr').hidden, false);
+    app.nodes.get('close-dialog').click();
+  } else {
+    assert.equal(phoneSaves, 1); assert.equal(records.size, 1);
+    assert.equal(storage.get('mosaicast-mode'), 'companion');
+    assert.equal(app.nodes.get('overlay').hidden, true);
+    assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
+    app.nodes.get('refresh').click(); await app.settle();
+    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.ok([...records.values()].some(raw => JSON.parse(raw).record.key === phoneRecord.key));
+    const restarted = await launch(tizen, { storage, companionFetch });
+    assert.equal(restarted.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
+    restarted.nodes.get('refresh').click(); await restarted.settle();
+    assert.equal(restarted.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.equal(restarted.calls.length, 0);
+  }
+  assert.equal(app.calls.length, 0); phone.close();
+});
+
+test('pairing QR is discarded on backgrounding and closing', async () => {
+  const app = await launch(); app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  app.document.visibilityState = 'hidden'; app.document.onvisibilitychange();
+  assert.equal(app.nodes.get('retry-qr').hidden, true);
+  assert.match(app.nodes.get('qr-status').textContent, /expired/);
+  app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
+  app.nodes.get('refresh-qr').click(); app.nodes.get('close-dialog').click();
   assert.equal(app.nodes.get('overlay').hidden, true);
 });

@@ -1,31 +1,73 @@
+import qrcode from 'qrcode-generator';
+import { en, uk } from './pairing-copy.js';
 import companionAPI from '../packages/musiccast/dist/index.js';
 
-const pairingStorageName = 'mosaicast-peer-v1';
+const copy = /^uk/.test(globalThis.navigator?.language || '') ? uk : en;
+const legacyPairingSlot = 'mosaicast-peer-v1';
+const pairingSlots = ['mosaicast-peer-v2-a', 'mosaicast-peer-v2-b'];
 let previewPairing;
 function peerRandom(length) {
   if (!globalThis.crypto?.getRandomValues) throw new Error('Secure random generator unavailable.');
   return globalThis.crypto.getRandomValues(new Uint8Array(length));
 }
+function storageError(error) {
+  const name = ['NotFoundError', 'TypeMismatchError', 'VerificationError', 'UnknownError', 'SecurityError', 'TimeoutError'].includes(error?.name) ? ` (${error.name})` : '';
+  return new Error(copy.saveFailed + name);
+}
+function readPairingSlot(store, name) {
+  let raw;
+  try { raw = store.getData({ name }); } catch (error) { if (error.name === 'NotFoundError') return; throw storageError(error); }
+  if (!raw) return;
+  try {
+    const value = JSON.parse(raw);
+    if (companionAPI.validPeer(value)) return { revision: 0, record: value, name };
+    if (Number.isSafeInteger(value.revision) && value.revision > 0 && companionAPI.validPeer(value.record)) return { ...value, name };
+  } catch { /* An incomplete slot does not replace a valid pairing. */ }
+}
+function pairingSlotsSaved(store) {
+  return [...pairingSlots, legacyPairingSlot].map(name => readPairingSlot(store, name)).filter(Boolean).sort((a, b) => b.revision - a.revision);
+}
 export function savedCompanion() {
   const store = globalThis.tizen?.keymanager;
   if (!store) return globalThis.tizen ? undefined : previewPairing;
-  try {
-    const value = JSON.parse(store.getData({ name: pairingStorageName }));
-    return companionAPI.validPeer(value) ? value : undefined;
-  } catch { return; }
+  return pairingSlotsSaved(store)[0]?.record;
 }
-export async function pairFrame(url) {
-  if (globalThis.tizen && !globalThis.tizen.keymanager) throw new Error('Secure storage unavailable. Check TV permissions.');
-  const pending = await companionAPI.beginPeerPairing(url, peerRandom);
+async function saveFramePairing(value) {
+  const store = globalThis.tizen?.keymanager;
+  if (!store) {
+    if (globalThis.tizen) throw storageError();
+    previewPairing = value; return;
+  }
+  const latest = pairingSlotsSaved(store)[0];
+  if (latest?.record.id === value.id && latest.record.key === value.key && latest.record.url === value.url && latest.record.receiver === value.receiver) return;
+  // Write the other slot, then read it back. Never remove the current record first.
+  const name = pairingSlots.find(slot => slot !== latest?.name);
+  const raw = JSON.stringify({ revision: (latest?.revision || 0) + 1, record: value });
+  try {
+    try { store.removeData({ name }); } catch (error) { if (error.name !== 'NotFoundError') throw error; }
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject({ name: 'TimeoutError' }), 5000);
+      const done = callback => result => { clearTimeout(timer); callback(result); };
+      try { store.saveData(name, raw, null, done(resolve), done(reject)); } catch (error) { clearTimeout(timer); reject(error); }
+    });
+    if (store.getData({ name }) !== raw) throw new Error('Readback failed');
+  } catch (error) { throw storageError(error); }
+}
+export async function pairFrame(url, invitation) {
+  if (globalThis.tizen && !globalThis.tizen.keymanager) throw storageError();
+  const pending = invitation ? await companionAPI.beginQRPairing(url, invitation, peerRandom) : await companionAPI.beginPeerPairing(url, peerRandom);
   return { comparison: pending.comparison, confirm: async () => {
-    const value = await pending.confirm();
-    const store = globalThis.tizen?.keymanager;
-    if (store) {
-      try { store.removeData({ name: pairingStorageName }); } catch (error) { if (error.name !== 'NotFoundError') throw new Error('Secure storage unavailable.'); }
-      await new Promise((resolve, reject) => store.saveData(pairingStorageName, JSON.stringify(value), null, resolve, () => reject(new Error('Secure storage unavailable.'))));
-    } else previewPairing = value;
-    return value;
+    // Do not commit on the phone until this TV has a durable, verified copy.
+    await saveFramePairing(pending.record);
+    try { return await pending.confirm(); }
+    catch { throw new Error(copy.phoneNotSaved); }
   } };
+}
+export function frameInvitation(receiver) {
+  const result = companionAPI.createPeerInvitation(peerRandom, receiver);
+  const qr = qrcode(0, 'M');
+  qr.addData(result.text); qr.make();
+  return { ...result, image: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(qr.createSvgTag({ cellSize: 6, margin: 24, scalable: true })) };
 }
 export function companionFeatures(snapshot) {
   const f = snapshot.features;

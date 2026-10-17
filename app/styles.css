@@ -54,3 +54,5 @@ main{scroll-padding:1rem 1rem 2rem}
 .yamaha-status[data-power=on] .receiver-icon img{opacity:1;filter:none}
 .yamaha-status[data-power=on] .power-light{border-color:#167544;background:#20b86a;box-shadow:0 0 .4rem #20b86a80}
 .yamaha-status[data-power=standby] .power-light{background:transparent}
+
+#qr-pairing{display:flex;align-items:center;flex-direction:column;gap:.55rem}#pairing-qr{width:min(32vh,20rem);height:min(32vh,20rem);background:white}#qr-pairing button{font-size:.7rem;padding:.55rem .8rem}#qr-status{font-size:.7rem;margin:.2rem 0;color:var(--muted)}

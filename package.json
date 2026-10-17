@@ -20,7 +20,8 @@
     "pretest:tv": "npm run build --workspace @mosaicast/musiccast",
     "test:tv": "node --test test/*.test.js",
     "typecheck": "npm run typecheck --workspace @mosaicast/musiccast",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "bundle:check": "npm run build"
   },
   "engines": {
     "node": ">=22"
@@ -31,5 +32,8 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "qrcode-generator": "2.0.4"
   }
 }

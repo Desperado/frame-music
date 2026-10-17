@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Packaged TV policy. Tizen access is origin-wide; this keeps scripts local and limits requests to LAN HTTP and lyrics. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' http://*; connect-src 'self' http://* http://*:8095 https://lrclib.net; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: http://*; connect-src 'self' http://* http://*:8095 https://lrclib.net; object-src 'none'; base-uri 'none'; form-action 'self'">
   <title>Frame Music</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
@@ -96,8 +96,9 @@
     <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-description">
       <button id="close-dialog" class="close" aria-label="Close dialog">×</button>
       <p class="eyebrow">FRAME MUSIC</p><h2 id="dialog-title">Connect your Yamaha</h2><p id="dialog-description"></p>
+      <div id="qr-pairing" hidden><img id="pairing-qr" alt="Pairing QR code"><p id="qr-status" role="status" aria-live="polite"></p><button id="retry-qr" type="button" hidden>Save connection / Try again</button><button id="refresh-qr" type="button">New QR code</button><button id="manual-pairing" type="button">Connect using an address</button></div>
       <form id="dialog-form"><label id="input-label" for="dialog-input">Local IP address</label><input id="dialog-input" autocomplete="off" maxlength="280"><div id="companion-fields" hidden><p id="companion-discovery-status" role="status"></p><div id="companion-results"></div><button id="find-companions" type="button">Search again</button><p>Compare on both screens</p><p id="pairing-code" role="status" aria-live="polite"></p></div><button class="primary" id="submit-dialog" type="submit">Connect</button></form>
-      <button id="pair-companion" class="quiet">Connect phone + TV</button>
+      <button id="pair-companion" class="primary">Connect phone + TV</button>
       <button id="takeover-menu" class="quiet" hidden>Take over menu</button>
       <button id="use-demo" class="quiet">Preview without connecting</button>
       <div id="help-sections" class="help-sections" hidden>
