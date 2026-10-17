@@ -2,11 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import api from '../packages/musiccast/dist/index.js';
-import { FrameCompanion, companionTuner, pairFrame, frameInvitation, savedCompanion } from '../app/companion.js';
+import { parseFeatures } from '../packages/musiccast/dist/parsers.js';
+import { deviceCapabilities, sources } from '../app/protocol.js';
+import { FrameCompanion, companionFeatures, companionTuner, pairFrame, frameInvitation, savedCompanion } from '../app/companion.js';
 
 const snapshot = () => ({ model: 'Fixture', features: { controls: ['power', 'volume', 'mute'], connectivity: [], sources: [{ id: 'deezer', name: 'Deezer', networkPlayer: true }, { id: 'tuner', name: 'Radio', networkPlayer: false, tuner: true }], volumeRange: { min: 0, max: 20, step: 1 } }, status: { power: 'on', input: 'deezer', volume: 10, mute: false }, track: { title: 'Fixture song', artist: '', album: '', playback: 'pause' }, trackUnavailable: false });
 
 const random = n => new Uint8Array(randomBytes(n));
+test('paired browsing follows phone support while preserving input selection and network playback', () => {
+  const ids = ['deezer', 'server', 'usb', 'net_radio', 'napster', 'juke', 'qobuz', 'tidal', 'spotify'];
+  const raw = { system: { input_list: ids.map(id => ({ id, play_info_type: 'netusb' })) }, zone: [{ id: 'main', input_list: ids }] };
+  const paired = sources(companionFeatures({ features: parseFeatures(raw) }));
+  assert.deepEqual(paired.map(source => source.id), ids);
+  assert.deepEqual(paired.filter(source => source.browse).map(source => source.id), ['deezer', 'server', 'usb', 'net_radio']);
+  assert.ok(paired.every(source => source.type === 'netusb'));
+  assert.ok(paired.filter(source => !source.browse).every(source => !source.description.startsWith('Browse')));
+  assert.deepEqual(sources(raw).filter(source => source.browse).map(source => source.id), ids.slice(0, -1));
+});
+
+test('paired capabilities preserve parsed connectivity labels without inventing unsupported features', () => {
+  const raw = { system: { func_list: ['wired_lan', 'wireless_lan', 'wireless_direct', 'airplay', 'bluetooth_tx_setting', 'network_standby'], input_list: [{ id: 'deezer', play_info_type: 'netusb' }] }, zone: [{ id: 'main', input_list: ['deezer'], func_list: ['power', 'volume', 'mute'] }] };
+  const features = parseFeatures(raw);
+  features.connectivity.push('Unknown connection');
+  assert.deepEqual(deviceCapabilities(companionFeatures({ features })), deviceCapabilities(raw));
+  features.connectivity = [];
+  assert.deepEqual(deviceCapabilities(companionFeatures({ features })), ['Power control', 'Volume', 'Mute']);
+});
+
 const url = 'http://192.168.1.10:8095';
 function service(coordinator, record, persist = async () => {}) {
   const phone = new api.PhonePeerService('192.168.1.20', url, coordinator, random, record, persist);

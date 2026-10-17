@@ -4,7 +4,7 @@ Bug reports, documentation improvements, device compatibility reports and focuse
 
 ## Development
 
-Use Node.js 22 or newer. No account, API key or hardware is required for the simulated tests and preview.
+Use Node.js 22 or newer. Install pinned packages with `npm ci`. No account, API key or hardware is required for the simulated tests and preview.
 
 ```sh
 npm ci
@@ -13,7 +13,7 @@ npm run bundle:check
 npm start
 ```
 
-Open http://127.0.0.1:4173 for Preview mode. See the [README](README.md) for connecting hardware and installing on a TV. `app/bundle.js`, `app/LICENSE` and `app/THIRD_PARTY_NOTICES.md` are generated and ignored; edit the source modules and root notices instead. `package.json` intentionally has `private: true` to prevent accidental npm publication; source licensing is defined by [LICENSE](LICENSE).
+Open http://127.0.0.1:4173 for Preview mode. See the [README](README.md) for connecting hardware and installing on a TV. `app/bundle.js`, `app/LICENSE` and `app/THIRD_PARTY_NOTICES.md` and `app/licenses/` are generated and ignored; edit the source modules and root notices instead. `package.json` intentionally has `private: true` to prevent accidental npm publication; source licensing is defined by [LICENSE](LICENSE).
 
 ## Issues and pull requests
 

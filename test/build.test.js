@@ -1,8 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Script } from 'node:vm';
-import { buildApp } from '../scripts/build.js';
+import { buildApp, stageLicenses } from '../scripts/build.js';
+
+test('the TV package includes complete project and runtime dependency notices', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'frame-music-licenses-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const destination = pathToFileURL(`${directory}/`);
+  await stageLicenses(destination);
+  const sources = {
+    LICENSE: '../LICENSE',
+    'THIRD_PARTY_NOTICES.md': '../THIRD_PARTY_NOTICES.md',
+    'licenses/qrcode-generator.txt': '../licenses/qrcode-generator.txt',
+    'licenses/mosaicast-MIT.txt': '../packages/musiccast/LICENSE',
+    ...Object.fromEntries(['ciphers', 'curves', 'hashes'].map(name => [
+      `licenses/noble-${name}-MIT.txt`, `../node_modules/@noble/${name}/LICENSE`,
+    ])),
+  };
+  for (const [packaged, source] of Object.entries(sources)) {
+    assert.equal(await readFile(new URL(packaged, destination), 'utf8'),
+      await readFile(new URL(source, import.meta.url), 'utf8'), packaged);
+  }
+});
 
 test('the TV artifact parses as a standalone classic script', async () => {
   new Script(await buildApp(), { filename: 'bundle.js' });

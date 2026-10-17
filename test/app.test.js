@@ -7,8 +7,20 @@ import shared from '../packages/musiccast/dist/index.js';
 import { randomBytes, webcrypto } from 'node:crypto';
 
 // Run the real TV bundle with a small DOM fixture. No device or browser is contacted.
-async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '', companionFetch, webapis, discoveryFetch, onInvitation } = {}) {
-  let document, pollPlayer;
+async function launch(tizen, { storage = new Map(), storageUnavailable = false, remote: remoteState = {}, defaultHost = '', companionFetch, webapis, discoveryFetch, beforeStart, onInvitation } = {}) {
+  let document;
+  const intervals = new Map();
+  class Clock extends Date { static now() { return Date.now() + clock; } }
+  let clock = 0, timerId = 0;
+  const timers = new Map();
+  const advance = time => {
+    while (true) {
+      const next = [...timers].filter(([, timer]) => timer.at <= time).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      clock = next[1].at; timers.delete(next[0]); next[1].callback();
+    }
+    clock = Math.max(clock, time);
+  };
   class Element {
     constructor(tagName) {
       this.tagName = tagName.toUpperCase(); this.children = []; this.dataset = {}; this.attributes = {};
@@ -65,7 +77,10 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   Object.assign(remote, remoteState);
   const rootMenu = { layer: remote.layer, menu: remote.menu, items: remote.items };
   const context = createContext({
-    document, tizen, webapis, onInvitation, URL, URLSearchParams, TextEncoder, TextDecoder, crypto: webcrypto, AbortController, setTimeout, clearTimeout, setInterval(callback) { pollPlayer = callback; }, clearInterval() {},
+    document, tizen, webapis, onInvitation, Date: Clock, URL, URLSearchParams, TextEncoder, TextDecoder, crypto: webcrypto, AbortController,
+    setTimeout(callback, delay) { const id = ++timerId; timers.set(id, {callback, at: clock + delay}); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    setInterval(callback) { const id = {}; intervals.set(id, callback); return id; }, clearInterval(id) { intervals.delete(id); },
     localStorage: {
       getItem(key) { if (storageUnavailable) throw new Error('Storage unavailable'); return storage.get(key) ?? null; },
       setItem(key, value) { if (storageUnavailable) throw new Error('Storage unavailable'); storage.set(key, value); }
@@ -98,13 +113,18 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   });
   // Match the missing APIs on the declared minimum runtime, without patching Node globals.
   runInContext('Object.hasOwn = undefined', context);
-  // Observe the QR handoff in memory, without logging or capturing its credential.
+  beforeStart?.(document);
+  // Observe only in memory; never log or capture the invitation credential.
   const bundle = (await buildApp(defaultHost)).replace('const code = frameInvitation(savedHost());', 'const code = frameInvitation(savedHost()); onInvitation?.(code);');
   await runInContext(bundle, context);
   if (nodes.get('device-name').textContent === 'Preview mode') assert.equal(nodes.get('menu').children.length, 7, nodes.get('message').textContent);
   const key = (key, keyCode, shiftKey = false, repeat = false, timeStamp) => {
+    if (timeStamp !== undefined) advance(timeStamp);
     const event = { key, keyCode, shiftKey, repeat, timeStamp, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
-    document.onkeydown(event); return event;
+    document.onkeydown(event);
+    // Calls without a timestamp are taps; timestamped events model a held key.
+    if (!repeat && timeStamp === undefined) document.onkeyup?.({keyCode});
+    return event;
   };
   const settle = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
   const connect = async () => {
@@ -113,8 +133,8 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
     assert.equal(nodes.get('connection-badge').textContent, 'YAMAHA CONNECTED', nodes.get('message').textContent);
     assert.equal(nodes.get('connection-badge').hidden, false);
   };
-  const poll = async () => { pollPlayer(); await settle(); };
-  return { nodes, document, remote, calls, storage, key, settle, connect, poll };
+  const poll = async () => { for (const callback of [...intervals.values()]) callback(); await settle(); };
+  return { nodes, document, remote, calls, storage, key, settle, connect, poll, advance };
 }
 
 test('launch reconnects to the last successful device after restart without power, input or playback writes', async () => {
@@ -446,6 +466,7 @@ test('held arrows are paced while separate presses move immediately; held OK doe
   app.key('ArrowDown', 40, false, false, 1000); assert.equal(app.document.activeElement, cards[2]);
   app.key('ArrowDown', 40, false, true, 1040); assert.equal(app.document.activeElement, cards[2]);
   app.key('ArrowDown', 40, false, true, 1110); assert.equal(app.document.activeElement, cards[4]);
+  app.document.onkeyup({keyCode: 40});
   app.key('ArrowDown', 40, false, false, 1120); assert.equal(app.document.activeElement, cards[6]);
   app.key('Enter', 13, false, true); await app.settle();
   assert.equal(app.nodes.get('overlay').hidden, true);
@@ -702,8 +723,9 @@ test('theme comparison keeps D-pad focus inside the dialog while the layout chan
   const app = await launch(); const { nodes, document, key } = app;
   nodes.get('open-themes').focus(); nodes.get('open-themes').click();
   nodes.get('close-dialog').bounds = { x: 800, y: 100, width: 60, height: 60 };
-  nodes.get('surface-glass').bounds = { x: 300, y: 180, width: 140, height: 60 };
-  nodes.get('surface-solid').bounds = { x: 470, y: 180, width: 140, height: 60 };
+  nodes.get('surface-clear').bounds = { x: 300, y: 180, width: 140, height: 60 };
+  nodes.get('surface-glass').bounds = { x: 470, y: 180, width: 140, height: 60 };
+  nodes.get('surface-solid').bounds = { x: 640, y: 180, width: 140, height: 60 };
   ['gallery-night', 'record-store-after-hours', 'midnight-precision', 'warm-gallery', 'listening-room-noir', 'record-store', 'quiet-precision', 'light', 'dark'].forEach((theme, i) => {
     nodes.get(`theme-${theme}`).bounds = { x: 300 + (i % 2) * 350, y: 300 + Math.floor(i / 2) * 200, width: 300, height: 150 };
   });
@@ -857,7 +879,7 @@ test('power controls update confirmed state and focus without selecting an input
   app.nodes.get('power-on').click(); await app.settle();
   assert.equal(app.remote.power, 'on');
   assert.equal(app.nodes.get('power-state').dataset.power, 'on');
-  assert.equal(app.nodes.get('power-state').children.length, 3, 'status updates preserve the logo and light');
+  assert.equal(app.nodes.get('power-state').children.length, 3, 'status updates preserve the receiver illustration and light');
   assert.match(app.nodes.get('device-description').textContent, /Connected/);
   assert.equal(app.nodes.get('toggle-play').disabled, false);
   assert.equal(app.document.activeElement, app.nodes.get('power-off'));
@@ -865,7 +887,7 @@ test('power controls update confirmed state and focus without selecting an input
   assert.equal(app.remote.input, 'deezer');
 });
 
-test('Yamaha logo follows external power changes and distinguishes unavailable status from standby', async () => {
+test('receiver indicator follows external power changes and distinguishes unavailable status from standby', async () => {
   const app = await launch(); await app.connect();
   app.remote.power = 'standby';
   app.nodes.get('open-track').click(); await app.settle();
@@ -895,7 +917,7 @@ test('power controls are disabled when unsupported and reject capability removal
   assert.equal(app.remote.power, undefined);
 });
 
-test('glass and solid surfaces persist independently of themes and do not contact Yamaha', async () => {
+test('clear, glass and solid surfaces persist independently of themes and do not contact Yamaha', async () => {
   const app = await launch();
   assert.equal(app.document.documentElement.dataset.surface, 'glass');
   await app.connect(); app.calls.length = 0;
@@ -906,16 +928,23 @@ test('glass and solid surfaces persist independently of themes and do not contac
   assert.equal(app.storage.get('frame-music-surface'), 'solid');
   app.nodes.get('theme-midnight-precision').click();
   assert.equal(app.document.documentElement.dataset.surface, 'solid');
+  app.nodes.get('surface-clear').focus(); app.key('Enter', 13);
+  assert.equal(app.storage.get('frame-music-surface'), 'clear');
+  assert.equal(app.document.documentElement.dataset.surface, 'clear');
+  assert.equal(app.nodes.get('surface-clear').getAttribute('aria-pressed'), 'true');
+  app.nodes.get('theme-gallery-night').click();
+  assert.equal(app.document.documentElement.dataset.surface, 'clear');
   app.nodes.get('surface-glass').click();
+  assert.equal(app.nodes.get('surface-clear').getAttribute('aria-pressed'), 'false');
   assert.equal(app.nodes.get('surface-glass').getAttribute('aria-pressed'), 'true');
   assert.equal(app.nodes.get('surface-solid').getAttribute('aria-pressed'), 'false');
   app.key('Escape', 27);
   assert.equal(app.document.activeElement.id, 'open-themes');
   assert.equal(app.nodes.get('track-title').textContent, title);
   assert.equal(app.calls.length, 0);
-  for (const surface of ['solid', 'glass', '__proto__']) {
+  for (const surface of ['clear', 'solid', 'glass', '__proto__']) {
     const restarted = await launch(undefined, {storage: new Map([['frame-music-surface', surface]])});
-    assert.equal(restarted.document.documentElement.dataset.surface, surface === 'solid' ? 'solid' : 'glass');
+    assert.equal(restarted.document.documentElement.dataset.surface, surface === '__proto__' ? 'glass' : surface);
   }
   const blocked = await launch(undefined, {storageUnavailable: true});
   blocked.nodes.get('surface-solid').click();
@@ -977,19 +1006,73 @@ async function artistLibrary() {
   return Object.assign(app, {artists, open, hold, release});
 }
 
-test('holding Left/Right pages tracks once per hold, respects edges and never starts playback', async () => {
+test('holding Left/Right keeps paging at a controlled pace, stops at edges and never starts playback', async () => {
   const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
   await app.hold(39);
   assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
-  app.key('', 39, false, true, 2500); await app.settle();
+  app.key('', 39, false, true, 2000); await app.settle();
   assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
-  app.release(39); await app.hold(39, 3000);
+  app.key('', 39, false, true, 2500); await app.settle();
   assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
-  app.release(39); await app.hold(39, 4000);
+  app.key('', 39, false, true, 3500); await app.settle();
   assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
+  const count = app.calls.length;
+  app.key('', 39, false, true, 4500); await app.settle();
+  assert.equal(app.calls.length, count, 'a held key stops requesting at the boundary');
   app.release(39); await app.hold(37, 5000);
   assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
   assert.equal(app.calls.some(call => /setListControl|setPlayback|setPower|setInput/.test(call.route)), false);
+});
+
+test('held Deezer directions work when remote keydowns do not set repeat', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  app.nodes.get('menu').children[0].focus();
+  for (const time of [1000, 1300, 1600]) app.key('', 39, false, false, time);
+  await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  app.key('', 39, false, false, 2500); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
+  app.release(39);
+  assert.equal(app.calls.some(call => /setPlayback|setPower|setInput/.test(call.route)), false);
+});
+
+test('a single remote keydown pages after the hold threshold and keyup cancels every further page', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 39, false, false, 1000);
+  app.advance(1549); await app.settle();
+  assert.equal(app.calls.length, 0);
+  app.advance(1550); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  app.release(39); app.advance(5000); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '9–16 of 20');
+  const count = app.calls.length;
+  app.key('', 39, false, false, 6000); app.release(39);
+  app.advance(7000); await app.settle();
+  assert.equal(app.calls.length, count, 'a quick tap never becomes a later page change');
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 37, false, false, 8000);
+  app.advance(8550); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '1–8 of 20');
+  app.release(37);
+});
+
+test('a single held keydown continues through artists without keyboard repeat events', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 40, false, false, 1000);
+  app.advance(1550); await app.settle(); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  app.advance(2350); await app.settle(); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 9');
+  app.release(40); app.advance(5000); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 9');
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 38, false, false, 6000);
+  app.advance(6550); await app.settle(); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  app.release(38);
+  assert.equal(app.calls.some(call => /setPlayback|setPower|setInput/.test(call.route)), false);
 });
 
 test('held Up/Down opens adjacent artists across pages from nested albums and updates the background', async () => {
@@ -998,11 +1081,28 @@ test('held Up/Down opens adjacent artists across pages from nested albums and up
   assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
   assert.equal(app.nodes.get('main-content').dataset.artist, 'Artist 8');
   assert.deepEqual(app.calls.filter(call => call.route === 'netusb/setListControl').map(call => call.params.type), ['return', 'return', 'select']);
-  app.key('', 40, false, true, 2500); await app.settle();
-  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  app.key('', 40, false, true, 2500); await app.settle(); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 9');
   app.release(40); await app.hold(38, 3000);
+  assert.equal(app.nodes.get('menu-title').textContent, 'Artist 8');
+  app.key('', 38, false, true, 4500); await app.settle(); await app.settle();
   assert.equal(app.nodes.get('menu-title').textContent, 'Artist 7');
   assert.equal(app.calls.some(call => /setPlayback|setPower|setInput/.test(call.route)), false);
+});
+
+test('held repeats never queue pages during requests and stop after release', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  await app.hold(39);
+  app.key('', 39, false, true, 2500);
+  app.key('', 39, false, true, 3500);
+  app.key('', 39, false, true, 4500);
+  app.release(39);
+  await app.settle(); await app.settle();
+  assert.equal(app.nodes.get('menu-count').textContent, '17–20 of 20');
+  assert.equal(app.calls.filter(call => call.route === 'netusb/getListInfo').length, 4);
+  const count = app.calls.length;
+  app.key('', 39, false, true, 6500); await app.settle();
+  assert.equal(app.calls.length, count);
 });
 
 test('artist shortcuts stop at collection boundaries and can start from an Artists list', async () => {
@@ -1028,6 +1128,9 @@ test('held shortcuts reject external menu changes and a reordered artist index b
   await changed.hold(40);
   assert.equal(changed.calls.some(call => call.route === 'netusb/setListControl'), false);
   assert.match(changed.nodes.get('message').textContent, /menu changed/);
+  const count = changed.calls.length;
+  changed.key('', 40, false, true, 3000); await changed.settle();
+  assert.equal(changed.calls.length, count, 'a menu error stops the held gesture');
   const reordered = await artistLibrary(); await reordered.open(7); reordered.calls.length = 0;
   reordered.artists[7] = {text: 'Different artist', attribute: 2};
   await reordered.hold(40);
@@ -1055,6 +1158,23 @@ test('held shortcuts do not run in dialogs, after key release, when hidden or af
   assert.equal(app.calls.length, 0);
 });
 
+test('opening Help or hiding the app cancels an already armed hold without repeat events', async () => {
+  const app = await artistLibrary(); await app.open(7); app.calls.length = 0;
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 39, false, false, 1000);
+  app.nodes.get('help').click();
+  app.advance(2000); await app.settle();
+  assert.equal(app.calls.length, 0);
+  app.key('Escape', 27); app.release(39);
+  app.nodes.get('menu').children[0].focus();
+  app.key('', 39, false, false, 3000);
+  app.document.visibilityState = 'hidden'; app.document.onvisibilitychange();
+  app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
+  app.advance(4000); await app.settle();
+  assert.equal(app.calls.length, 0, 'returning to the app does not resume an old hold');
+  assert.equal(app.nodes.get('menu-count').textContent, '1–8 of 20');
+});
+
 
 test('saved demo and missing companion credentials never fall back to the saved Yamaha address', async () => {
   for (const mode of ['demo', 'companion']) {
@@ -1064,6 +1184,37 @@ test('saved demo and missing companion credentials never fall back to the saved 
     assert.equal(app.nodes.get('overlay').hidden, mode === 'demo');
     assert.equal(app.storage.get('mosaicast-mode'), mode);
   }
+});
+
+test('the TV bundle hides unsupported paired menus and keeps their input and playback controls', async () => {
+  const snapshot = { model: 'Shared fixture', features: { controls: ['power'], connectivity: ['Ethernet', 'Wi-Fi', 'Bluetooth output'], sources: ['deezer', 'tidal'].map(id => ({ id, name: id, networkPlayer: true })) }, status: { power: 'on', input: 'deezer' }, track: { title: 'Fixture song', artist: '', album: '', playback: 'pause' }, trackUnavailable: false };
+  const commands = [];
+  const coordinator = new shared.CompanionCoordinator({ read: async () => snapshot, execute: async command => {
+    commands.push(command);
+    if (command.type === 'input') snapshot.status.input = command.value;
+    if (command.type === 'playback') snapshot.track.playback = command.value;
+    return snapshot;
+  } }, 'ui-fixture');
+  const pairing = { url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex') };
+  const phone = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const app = await launch({ keymanager: { getData: () => JSON.stringify(pairing) } }, {
+    storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+      const result = await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+      return { ok: true, text: async () => JSON.stringify(result) };
+    }
+  });
+  app.nodes.get('refresh').click(); await app.settle();
+  app.nodes.get('sources').click(); await app.settle();
+  const buttons = app.nodes.get('source-list').querySelectorAll('button').map(button => button.getAttribute('aria-label'));
+  assert.ok(buttons.includes('Browse Deezer'));
+  assert.ok(!buttons.includes('Browse TIDAL'));
+  assert.match(app.nodes.get('capability-list').textContent, /Ethernet.*Wi-Fi.*Bluetooth output/);
+  sourceButton(app, 'Switch Yamaha input to TIDAL').click(); await app.settle();
+  assert.equal(snapshot.status.input, 'tidal');
+  assert.equal(app.nodes.get('toggle-play').disabled, false);
+  app.nodes.get('toggle-play').click(); await app.settle();
+  assert.deepEqual(commands, [{ type: 'input', value: 'tidal' }, { type: 'playback', value: 'play' }]);
+  assert.equal(app.calls.length, 0);
 });
 
 test('a companion menu stall leaves Now Playing and themes usable and cannot steal their focus on completion', async () => {
@@ -1077,10 +1228,13 @@ test('a companion menu stall leaves Now Playing and themes usable and cannot ste
   const handle = coordinator.handle.bind(coordinator);
   coordinator.handle = (client, request) => { operations.push(request.operation.type); return handle(client, request); };
   const phone = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
-  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+  let requests = 0;
+  const companionFetch = async (url, options = {}) => {
+    requests++;
     const result = await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
     return {ok: true, text: async () => JSON.stringify(result)};
-  }});
+  };
+  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {storage: new Map([['mosaicast-mode', 'companion']]), companionFetch});
   assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
   app.nodes.get('refresh').click(); await app.settle();
   app.nodes.get('source-list').querySelector('button').click(); await app.settle();
@@ -1098,6 +1252,31 @@ test('a companion menu stall leaves Now Playing and themes usable and cannot ste
   assert.equal(app.nodes.get('overlay').hidden, false);
   assert.equal(writes, 0); assert.equal(app.calls.length, 0);
   assert.equal(operations.every(type => ['reconcile', 'browse', 'browseAction'].includes(type)), true);
+
+  // A dialog or slow connect finishing after backgrounding must not renew authority.
+  app.document.visibilityState = 'hidden'; app.document.onvisibilitychange();
+  app.nodes.get('close-dialog').click();
+  app.advance(6000);
+  const hiddenRequests = requests;
+  await app.poll();
+  assert.equal(requests, hiddenRequests);
+  app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
+  await app.poll();
+  assert.ok(requests > hiddenRequests);
+
+  let startingDocument, hideOnce = true;
+  const hidden = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {
+    storage: new Map([['mosaicast-mode', 'companion']]), beforeStart: document => { startingDocument = document; },
+    companionFetch: async (url, options) => {
+      const response = await companionFetch(url, options);
+      if (hideOnce) { hideOnce = false; startingDocument.visibilityState = 'hidden'; startingDocument.onvisibilitychange(); }
+      return response;
+    }
+  });
+  assert.equal(hidden.nodes.get('device-name').textContent, 'Preview mode');
+  const finishedRequests = requests;
+  await hidden.poll();
+  assert.equal(requests, finishedRequests);
 });
 
 
@@ -1136,7 +1315,6 @@ test('leaving shared setup cancels all discovery probes and ignores late results
   assert.equal(app.nodes.get('companion-results').children.length, 0);
   assert.equal(app.nodes.get('overlay').hidden, true);
 });
-
 
 for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks phone confirmation when TV mode cannot persist' : 'pairs both devices and reconnects after TV restart'}`, async () => {
   const records = new Map(), storage = new Map(); let phoneRecord, phoneSaves = 0;

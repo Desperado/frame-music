@@ -35,24 +35,24 @@ setTheme(Object.prototype.hasOwnProperty.call(themes, savedTheme) ? savedTheme :
 for (const theme of Object.keys(themes)) $(`theme-${theme}`).onclick = () => setTheme(theme, true);
 
 function setSurface(surface, save = false) {
-  if (!['glass', 'solid'].includes(surface)) return;
+  if (!['clear', 'glass', 'solid'].includes(surface)) return;
   document.documentElement.dataset.surface = surface;
-  for (const value of ['glass', 'solid']) $(`surface-${value}`).setAttribute('aria-pressed', String(surface === value));
+  for (const value of ['clear', 'glass', 'solid']) $(`surface-${value}`).setAttribute('aria-pressed', String(surface === value));
   if (save) { try { localStorage.setItem('frame-music-surface', surface); } catch { /* Appearance still works without storage. */ } }
 }
 let savedSurface;
 try { savedSurface = localStorage.getItem('frame-music-surface'); } catch { /* Use glass when storage is unavailable. */ }
-setSurface(savedSurface === 'solid' ? 'solid' : 'glass');
-for (const surface of ['glass', 'solid']) $(`surface-${surface}`).onclick = () => setSurface(surface, true);
+setSurface(['clear', 'glass', 'solid'].includes(savedSurface) ? savedSurface : 'glass');
+for (const surface of ['clear', 'glass', 'solid']) $(`surface-${surface}`).onclick = () => setSurface(surface, true);
 
 let stopCompanionWatch, viewEpoch = 0, operationView = 0;
-let client, list, features, isDemo = true, busy = false, prepared = false, dialogMode, searchEntry, priorFocus, browsingInput = 'deezer', sourceView = false, currentStatus;
+let client, connectingClient, list, features, isDemo = true, busy = false, prepared = false, dialogMode, searchEntry, priorFocus, browsingInput = 'deezer', sourceView = false, currentStatus;
 let trackView = false, metadataKey = '', metadataVersion = 0, artKey = '', artRevision = 0;
 let trackOrigin = 'menu';
 let sceneTrack = {}, sceneArtwork = '', sceneVersion = 0, browseScene = null;
 const viewMemory = new Map(), menuParents = [];
 const zoneMemory = new Map();
-let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0, heldArrow;
+let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0, heldArrow, pressedArrow;
 const lyricsLoader = new LyricsLoader();
 const icons = { Flow: '≈', Charts: '↗', Recommendations: '✧', Mixes: '♫', Genres: '◈', 'My library': '▤', Search: '⌕' };
 
@@ -540,7 +540,7 @@ function openDialog(mode, item) {
   $('dialog-form').hidden = !['connect', 'companion', 'search'].includes(mode);
   $('help-sections').hidden = mode !== 'help';
   $('surface-options').hidden = mode !== 'theme';
-  heldArrow = undefined;
+  clearHeldArrow();
   $('exit-actions').hidden = mode !== 'exit';
   $('theme-options').hidden = mode !== 'theme';
   $('overlay').classList.toggle('theme-overlay', mode === 'theme');
@@ -577,7 +577,7 @@ function openDialog(mode, item) {
   }
   if (mode === 'theme') {
     $('dialog-title').textContent = 'Appearance';
-    $('dialog-description').textContent = 'Glass layers song titles over the artwork. Choose a surface and a theme.';
+    $('dialog-description').textContent = 'Clear reveals more artwork; Glass adds contrast; Solid uses opaque panels. Choose a surface and a theme.';
   }
   if (mode === 'help') {
     $('dialog-title').textContent = 'Help';
@@ -589,7 +589,7 @@ function openDialog(mode, item) {
 function closeDialog() {
   qrInvitation = undefined; $('pairing-qr').removeAttribute('src');
   stopCompanionSearch(); pendingPair = undefined; ++pairingAttempt;
-  client?.setActive?.(true);
+  client?.setActive?.(document.visibilityState === 'visible');
   $('overlay').hidden = true;
   if (visibleControls().includes(priorFocus)) priorFocus.focus();
   else if (trackView) $('sources').focus();
@@ -616,6 +616,8 @@ function savedHost() {
 
 async function connect(host, demo = false, pairing) {
   const candidate = pairing ? new FrameCompanion(pairing) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
+  connectingClient = candidate;
+  candidate.setActive?.(document.visibilityState === 'visible');
   try {
   const device = await candidate.request('system/getDeviceInfo');
   const capabilities = await candidate.request('system/getFeatures');
@@ -660,6 +662,7 @@ async function connect(host, demo = false, pairing) {
   closeDialog();
   (menu ? $('menu') : $('source-list')).querySelector('button:not(:disabled)')?.focus();
   } catch (error) { if (candidate !== client) candidate.close?.(); throw error; }
+  finally { if (connectingClient === candidate) connectingClient = undefined; }
 }
 
 $('find-companions').onclick = () => { if (companionSearch) stopCompanionSearch(); else void searchCompanions(); };
@@ -883,10 +886,35 @@ function moveFocus(dx, dy) {
   else if (dy > 0) { playerOrigin = zone; rememberView(); focusZone('player'); }
 }
 
+function clearHeldArrow() {
+  if (heldArrow) clearTimeout(heldArrow.timer);
+  heldArrow = undefined;
+}
+
+function scheduleHeldArrow(gesture, delay) {
+  gesture.timer = setTimeout(async () => {
+    if (heldArrow !== gesture) return;
+    if (document.visibilityState !== 'visible' || !$('overlay').hidden || sourceView || trackView || viewKey() !== gesture.view) { clearHeldArrow(); return; }
+    // Poll only while unrelated work finishes; never queue a navigation request.
+    if (busy || client.pending) { scheduleHeldArrow(gesture, 100); return; }
+    await action(async () => {
+      const direction = gesture.code === 37 || gesture.code === 38 ? -1 : 1;
+      await (gesture.horizontal ? pageMenu(direction) : adjacentArtist(direction, gesture.selected));
+      if (heldArrow !== gesture) return;
+      const nextView = viewKey();
+      if (nextView === gesture.view) return; // Stop at collection boundaries.
+      gesture.view = nextView;
+      gesture.selected = undefined;
+      // Schedule only after success. Errors stop this hold until key release.
+      scheduleHeldArrow(gesture, 800);
+    });
+  }, delay);
+}
+
 document.addEventListener('keydown', event => {
   const code = event.keyCode;
-  if (document.visibilityState !== 'visible') { heldArrow = undefined; return; }
-  if (![37, 38, 39, 40].includes(code)) heldArrow = undefined;
+  if (document.visibilityState !== 'visible') { clearHeldArrow(); pressedArrow = undefined; return; }
+  if (![37, 38, 39, 40].includes(code)) { clearHeldArrow(); pressedArrow = undefined; }
   const trackCommand = { 427: 'next', 428: 'previous' }[code];
   if (trackCommand) {
     if (document.visibilityState !== 'visible') return;
@@ -917,24 +945,16 @@ document.addEventListener('keydown', event => {
     if (document.activeElement.tagName === 'INPUT' && (code === 37 || code === 39)) return;
     event.preventDefault();
     const now = event.timeStamp || Date.now();
-    if (!event.repeat) {
-      heldArrow = undefined;
+    const repeated = event.repeat || pressedArrow === code;
+    if (!repeated) {
+      clearHeldArrow(); pressedArrow = code;
       const horizontal = code === 37 || code === 39;
       if (!busy && $('overlay').hidden && !sourceView && !trackView && list && zoneFor(document.activeElement) === 'content' && (horizontal || isArtistFolder(list.menu_name) || artistParent())) {
-        heldArrow = { code, start: now, view: viewKey(), horizontal, selected: isArtistFolder(list.menu_name) ? entries(list).find(item => String(item.index) === String(document.activeElement.dataset.index)) : undefined };
+        heldArrow = { code, view: viewKey(), horizontal, selected: isArtistFolder(list.menu_name) ? entries(list).find(item => String(item.index) === String(document.activeElement.dataset.index)) : undefined };
+        scheduleHeldArrow(heldArrow, 550);
       }
-    } else if (heldArrow?.code === code) {
-      if (heldArrow.fired) return;
-      if (viewKey() !== heldArrow.view || !$('overlay').hidden) { heldArrow = undefined; return; }
-      if (now - heldArrow.start >= 550) {
-        heldArrow.fired = true;
-        const direction = code === 37 || code === 38 ? -1 : 1;
-        const { horizontal, selected } = heldArrow;
-        action(() => horizontal ? pageMenu(direction) : adjacentArtist(direction, selected));
-      }
-      return;
-    }
-    if (event.repeat && code === lastArrow && now - lastArrowTime < 110) return;
+    } else if (heldArrow?.code === code) return;
+    if (repeated && code === lastArrow && now - lastArrowTime < 110) return;
     lastArrow = code; lastArrowTime = now;
     moveFocus(code === 37 ? -1 : code === 39 ? 1 : 0, code === 38 ? -1 : code === 40 ? 1 : 0); return;
   }
@@ -948,7 +968,7 @@ document.addEventListener('keydown', event => {
   else if ({ 19: 'pause', 413: 'stop', 10232: 'previous', 10233: 'next' }[code]) { event.preventDefault(); playback({ 19: 'pause', 413: 'stop', 10232: 'previous', 10233: 'next' }[code]); }
 });
 
-document.addEventListener('keyup', event => { if (heldArrow?.code === event.keyCode) heldArrow = undefined; });
+document.addEventListener('keyup', event => { if (pressedArrow === event.keyCode) { clearHeldArrow(); pressedArrow = undefined; } });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') {
     stopCompanionSearch();
@@ -958,7 +978,10 @@ document.addEventListener('visibilitychange', () => {
       $('qr-status').textContent = pairingCopy.tvQRExpired;
     }
   }
-  heldArrow = undefined; client?.setActive?.(document.visibilityState === 'visible');
+  clearHeldArrow(); pressedArrow = undefined;
+  const active = document.visibilityState === 'visible';
+  client?.setActive?.(active);
+  if (connectingClient !== client) connectingClient?.setActive?.(active);
 });
 
 if (globalThis.tizen?.tvinputdevice) {
