@@ -12,6 +12,9 @@ Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md), the [code of
 
 | Project | Relationship to Frame Music |
 | --- | --- |
+| [Mosaicast](https://github.com/Desperado/mosaicast) | Shared phone/TV coordination protocol and adapter, vendored under MIT; see [integration provenance](docs/integration-provenance.md). |
+| [noble cryptography](https://github.com/paulmillr) | MIT cryptography packages bundled in the TV script; full notices are staged by the build. |
+| [esbuild](https://github.com/evanw/esbuild), [TypeScript](https://github.com/microsoft/TypeScript) | Build and typechecking tools, installed separately from the TV runtime. |
 | [pyamaha](https://github.com/rsc-dev/pyamaha) | MusicCast protocol reference for our JavaScript implementation; not an installed Python dependency. |
 | [LRCLIB](https://github.com/tranxuanthang/lrclib) | External lyrics API used by `app/metadata.js`; its server code is not bundled. |
 | [Node.js](https://github.com/nodejs/node) | Build, test and local preview runtime; the TV runs the generated JavaScript without Node.js. |
@@ -19,13 +22,22 @@ Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md), the [code of
 | [Google Fonts](https://github.com/google/fonts) and the font projects | Seven font families bundled locally under OFL-1.1, with their original notices. |
 | [actions/checkout](https://github.com/actions/checkout), [actions/setup-node](https://github.com/actions/setup-node) | GitHub CI tooling; not part of the TV application. |
 
-There are no third-party npm dependencies. The [full inventory](THIRD_PARTY_NOTICES.md) links each font's upstream project and local license, and distinguishes these open-source relationships from proprietary device APIs and media content.
+The paired integration vendors Mosaicast under MIT and bundles the pinned `@noble/ciphers`, `@noble/curves` and `@noble/hashes` cryptography packages. esbuild and TypeScript are development tools. The [full inventory](THIRD_PARTY_NOTICES.md) links each font's upstream project and local license, and distinguishes these open-source relationships from proprietary device APIs and media content.
+
+## Phone + TV integration
+
+Frame Music now includes the paired Mosaicast integration. Choose **Connection → Connect phone + TV** to discover the iPhone, compare the six digits on both screens and approve pairing. This requires a new Mosaicast native iPhone build with `MosaicastPeer` and SecureStore; Expo Go and the phone web preview cannot host the coordinator. See the [pairing and recovery guide](docs/companion.md).
+
+With both apps open, the phone coordinates Yamaha commands. If the phone closes, the TV waits 60 seconds after detecting the loss and requires **Refresh** before taking over. Commands are sent once, busy presses are dropped, and uncertain actions require explicit Refresh. Standalone connection and Preview remain available as explicit modes; a failed paired connection never silently switches to the saved standalone receiver.
+
+The shared package includes the phone's Bluetooth protocol additions. This port adds no TV headphone-management screen. Pairing, handoff and recovery on physical iPhone/Frame hardware remain [validation work](docs/companion-validation.md). Imported code and compatibility rules are recorded in [source provenance](docs/integration-provenance.md).
 
 ## Try it on this Mac
 
-Requires Node.js 22 or newer. There are no dependencies to install.
+Requires Node.js 22 or newer. Install the pinned build and shared-protocol dependencies first.
 
 ```sh
+npm ci
 npm start
 ```
 
@@ -35,17 +47,21 @@ After updating the app, stop and restart `npm start`, then reload the browser so
 
 Use arrow keys and Enter, or click. Escape returns to the previous menu. Flow and playable tracks start audio on the Yamaha when selected. Search opens a text field. Play/pause, previous and next control the Yamaha’s current network/USB source; the bottom bar identifies that source. These controls are disabled for CD, tuner, external inputs and standby. On the TV, **Channel Up (CH ↑)** skips to the next song and **Channel Down (CH ↓)** returns to the previous song. The D-pad continues to browse menus. The remote’s media keys are also supported. A collection advertising both open and play actions opens on Enter and plays with the Play key.
 
-Remote navigation follows areas: Up/Down in the sidebar, arrows within the content grid, and Left/Right across button bars. Left from the edge of content enters the sidebar; Right returns to the remembered content item. Down past the last content row reaches the player, and Up returns to the originating area. Back from Now Playing, Sources, or a nested menu restores your item, page, and scroll position when that content still exists. Held arrows are paced; held OK and Back do not cascade through screens. At the TV root, Back opens an exit confirmation with **Keep listening** selected. Exiting the app leaves Yamaha playback alone.
+Remote navigation follows areas: Up/Down in the sidebar, arrows within the content grid, and Left/Right across button bars. Left from the edge of content enters the sidebar; Right returns to the remembered content item. Down past the last content row reaches the player, and Up returns to the originating area. Back from Now Playing, Sources, or a nested menu restores your item, page, and scroll position when that content still exists. Held arrows are paced; held OK and Back do not cascade through screens. Hold Left/Right to change menu pages. Within a collection opened through Artists, hold Up/Down to open the adjacent artist. At the TV root, Back opens an exit confirmation with **Keep listening** selected. Exiting the app leaves Yamaha playback alone.
 
-The bottom bar also has **− / +** volume buttons and **Mute / Unmute**. Each press changes the Yamaha volume by one device step. The display shows its native level and maximum (0–63 on this CD-NT670D), not a percentage. Controls follow the capabilities and limits reported by the device. Volume and mute status refresh every ten seconds and immediately after a change; mute reads the current state before toggling so it follows changes made in MusicCast.
+The bottom bar also has **− / +** volume buttons and **Mute / Unmute**. Each press changes the Yamaha volume by one device step. The display shows its native level and maximum (0–63 on this CD-NT670D), not a percentage. Controls follow the capabilities and limits reported by the device. In standalone mode, volume and mute status refresh every ten seconds and immediately after a change; mute reads the current state before toggling so it follows changes made in MusicCast.
 
 While Frame Music is open, the Samsung remote's **Volume up**, **Volume down** and **Mute** buttons control the connected Yamaha, including while a search or connection dialog is open. A held mute button toggles once; volume repeats are accepted when the preceding action has finished, without queuing delayed changes. In demo mode these keys change only simulated sound settings. Unsupported remote-key registration leaves the onscreen controls available. The channel rocker also works across dialogs. Holding it skips once, and presses during a pending action are consumed without queuing skips. Channel skips use the same fresh source and power checks as the onscreen playback buttons. These mappings apply only to this app in the foreground; it does not replace volume controls in other apps, TV menus or Art Mode. See [Samsung's remote key API](https://developer.samsung.com/smarttv/develop/guides/user-interaction/remote-control.html).
 
-Select **Now playing** in the sidebar or toolbar for the current song, artist, album, playback position/duration, album cover and lyrics when found. Details and cover art preload when the current network/USB track changes, including changes made through MusicCast; the player checks every ten seconds and immediately after an app playback action. Covers come from the connected Yamaha’s album-art directory and also appear in the bottom bar. Missing metadata or an unavailable cover leaves a readable fallback. CD, tuner, external inputs and standby clear retained network-player details.
+Select **Now playing** in the sidebar or toolbar for the current song, artist, album, playback position/duration, album cover and lyrics when found. Details and cover art preload when the current network/USB track changes, including changes made through MusicCast; the standalone player checks every ten seconds and immediately after an app playback action. Companion mode observes the shared coordinator instead. Covers come from the connected Yamaha’s album-art directory and also appear in the bottom bar. Missing metadata or an unavailable cover leaves a readable fallback. CD, tuner, external inputs and standby clear retained network-player details.
 
 Lyrics use [LRCLIB’s public API](https://lrclib.net/docs), without an account or API key. The artist, song, album and duration are sent to LRCLIB; artwork stays on the home network. Lyrics load independently with an eight-second timeout and a bounded in-memory cache of 20 recordings. Repeated player polls reuse results; failed requests retry after a minute, missing matches after ten minutes, and successful matches after a day. Artist, title, album and known duration must match before lyrics are shown. Instrumental, missing and offline states are displayed explicitly. Delayed results from an earlier song are ignored. Use the **↑ Lyrics / ↓ Lyrics** buttons to scroll with the TV remote. Demo mode uses original example lyrics and an illustrated cover without contacting a provider.
 
-Choose **Theme** at the top of the screen to compare four styles from the supplied Frame Music Directions boards: **Warm Gallery** (warm paper, framed cards and an olive player), **Listening Room Noir** (dark room, serif type and a focused-item preview), **Record Store** (cobalt navigation, numbered sleeves and bold borders), and **Quiet Precision** (compact ruled lists and restrained blue accents). Three additional dark palettes preserve those layouts: **Gallery Night** (dark olive and soft peach), **Record Store After Hours** (ink blue, muted sleeves and amber), and **Midnight Precision** (deep navy and cool blue). The light styles now use muted paper and grey surfaces to reduce large bright areas on a TV. Themes cover Browse, Now Playing, Sources, dialogs, lyrics and the player. Fonts and their OFL licenses are bundled locally; theme changes make no device requests.
+Choose **Appearance** at the top of the screen to compare four styles from the supplied Frame Music Directions boards: **Warm Gallery** (warm paper, framed cards and an olive player), **Listening Room Noir** (dark room, serif type and a focused-item preview), **Record Store** (cobalt navigation, numbered sleeves and bold borders), and **Quiet Precision** (compact ruled lists and restrained blue accents). Three additional dark palettes preserve those layouts: **Gallery Night** (dark olive and soft peach), **Record Store After Hours** (ink blue, muted sleeves and amber), and **Midnight Precision** (deep navy and cool blue). The light styles now use muted paper and grey surfaces to reduce large bright areas on a TV. Themes cover Browse, Now Playing, Sources, dialogs, lyrics and the player. Fonts and their OFL licenses are bundled locally; theme changes make no device requests.
+
+Appearance also offers **Clear**, **Glass** (the default), and **Solid** surfaces, saved independently of the theme. Clear reveals more of the artwork through borderless panels, with local dark shading and text shadows to keep titles visible. Glass places readable song titles on translucent dark cards over artist backgrounds and matching artwork, with a brighter border for remote focus. Static translucent layers work without blur support on the TV. **Help** in the main navigation contains Remote, Playback, Connection, and Artwork & lyrics topics; playback instructions and setup notes live there rather than on each music card.
+
+Tap the remote circle directions for normal focus navigation. With a music card focused, hold **Left / Right** for at least 550 ms to open the previous / next page of eight items. Within an artist collection opened through an **Artists** list, hold **Up / Down** to open the previous / next artist, including from nested albums. These shortcuts also work from the Artists list relative to the focused artist. Keep holding to continue browsing, with at least 800 ms between completed moves. Release to stop; moves already in progress finish, and repeats never queue more requests. Holding stops at collection boundaries or menu errors and sends no playback, power, or input-switch command. Shared Yamaha menus are checked again before navigation and selection; a changed menu requires choosing again.
 
 Use arrows and OK to preview a style; Back closes the chooser and restores your screen and focus. Your choice is saved locally. Existing Light/Dark preferences remain available as **Classic Light / Classic Dark**. With no saved choice, **Gallery Night** is the default. Saved theme choices are preserved. Noir, Record Store and After Hours use horizontal top navigation: Left/Right moves between destinations and Down enters content. Gallery, Precision and the classic styles use the sidebar navigation described above.
 
@@ -67,13 +83,16 @@ The CD-NT670D advertised these 16 inputs during a read-only local probe:
 | PC / NAS, Internet radio, USB | Browse the device’s menu; switch input |
 | Spotify Connect, AirPlay | Switch input; send music from the service app or an AirPlay sender |
 | Bluetooth, MusicCast Link | Switch input; pairing and room setup through MusicCast |
-| CD, FM / DAB radio, Optical input, AUX | Switch input; use the Yamaha remote for source-specific controls |
+| FM / DAB radio | Switch input; companion mode adds capability-driven tuning, presets and DAB scan in Now Playing |
+| CD, Optical input, AUX | Switch input; use the Yamaha remote for source-specific controls |
 
-Its capability overview includes Ethernet, Wi-Fi, Wireless Direct, Bluetooth input/output, AirPlay, network and automatic standby, power, sleep timer, volume/mute, recent listening, play queue, MusicCast playlists, FM/DAB, linking/audio quality and up to nine multiroom clients. These describe what the Yamaha reports supporting, not which connections are active. Network setup, Bluetooth pairing/output settings, CD transport, station tuning, sleep settings, queue management and multiroom group creation are not exposed in this version.
+Its capability overview includes Ethernet, Wi-Fi, Wireless Direct, Bluetooth input/output, AirPlay, network and automatic standby, power, sleep timer, volume/mute, recent listening, play queue, MusicCast playlists, FM/DAB, linking/audio quality and up to nine multiroom clients. These describe what the Yamaha reports supporting, not which connections are active. Network setup, Bluetooth pairing/output settings, CD transport, standalone station tuning, sleep settings, queue management and multiroom group creation are not exposed in this version.
 
 Advertised streaming services can remain in older firmware even when unavailable. Accounts, subscriptions and regional availability are managed through Yamaha and the providers. See [Yamaha’s CD-NT670D product information](https://uk.yamaha.com/en/audio/home-audio/products/hifi-components/cd-nt670d/). This app does not bypass subscriptions or configure accounts.
 
 ## What was verified
+
+The device observations below predate this integration port. They do not establish phone + TV pairing, handoff or physical TV behavior. See the [integration validation checklist](docs/companion-validation.md) for the new work.
 
 Local probing confirmed a CD-NT670D with API 2.08 and firmware 2.16. Its Deezer root menu exposes Flow, Charts, Recommendations, Mixes, Genres, My library and Search; Search advertises the search capability. Initial browsing checks used read requests while Bluetooth playback was active. Safari successfully connected the app to the Yamaha and displayed its live menu and playback information. Arrow-key navigation, returning to the home menu and submitting a search were checked in demo mode. Live volume changes (0 → 1 → 0) and mute/unmute were confirmed through the app; the original sound settings were restored. Sound commands wait briefly for the device to confirm its updated state.
 
@@ -83,27 +102,41 @@ The new Now Playing screen was checked in Safari against the physical Yamaha: it
 
 ## Install on the Frame
 
-The `app/` directory is a Tizen web application, with its own `config.xml`. The installed TV app talks directly to the Yamaha; the Mac preview uses a local proxy because desktop browsers restrict cross-origin requests. Direct HTTP access must be checked on the TV firmware. The preview proxy is loopback-only and is not an iPhone server.
+The `app/` directory is a Tizen web application, with its own `config.xml`. In standalone mode the installed TV app talks directly to the Yamaha; the Mac preview uses a local proxy because desktop browsers restrict cross-origin requests. Direct HTTP access must be checked on the TV firmware. The preview proxy is loopback-only and is not an iPhone server.
 
 1. Install [Tizen Studio and Samsung’s TV extension](https://developer.samsung.com/smarttv/develop/getting-started/setting-up-sdk/installing-tv-sdk.html), including the Samsung Certificate Extension.
 2. On the TV’s Apps screen, enter **12345** to open Developer Mode. Enable it, enter this Mac’s LAN IP, and restart the TV. Keep the Mac, TV and Yamaha on the same network. See [Samsung’s device setup guide](https://developer.samsung.com/smarttv/develop/getting-started/using-sdk/tv-device.html).
 3. Run `npm run build`, then import `app/` as an existing Tizen web project. In Certificate Manager, create a Samsung TV certificate profile with your TV’s device identifier. Keep certificate files and signing passwords outside this repository.
 4. Connect to the TV in Device Manager and grant permission to install applications. Select the certificate profile, then run the project as a Tizen Web Application. Samsung’s tooling builds and signs the `.wgt` package.
-5. Open Frame Music on the TV, choose **Connection**, and enter the Yamaha’s address once. Later launches reconnect automatically to the saved device, including after the TV restarts and opens the app again. This does not configure the TV to launch the app automatically at power-on.
+5. Open Frame Music on the TV and choose **Connection → Connect phone + TV** for paired control, or enter the Yamaha’s address for standalone control. Later launches reconnect to the selected mode, including after the TV restarts and opens the app again. This does not configure the TV to launch the app automatically at power-on.
 
-The build also copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `app/` for packaging. Keep those generated notices and the bundled font licenses in redistributed TV packages.
+The build also copies `LICENSE`, `THIRD_PARTY_NOTICES.md` and the full runtime dependency notices under `app/licenses/` into the TV package. Keep those generated notices and the bundled font licenses in redistributed TV packages.
 
 Samsung preserves local storage during app updates but clears it when the app is uninstalled; see [Samsung's data storage FAQ](https://developer.samsung.com/smarttv/develop/faq/data-and-file-handling.html). For a personalised TV package that can reconnect even after a full uninstall/reinstall, run `npm run build -- --yamaha-host 192.168.1.20` with your device's private IPv4 address before staging/signing the package. That preset is embedded only in the ignored generated bundle, not the source. A valid saved address takes priority over the preset. A regular `npm run build` removes the preset and produces the generic setup experience. A changed DHCP address still requires updating Connection or using a router DHCP reservation.
 
-The Tizen tools are not installed in this workspace, so no signed package or physical TV installation is claimed. No rooting is required. This first version is the on-TV music app; Frame Art Mode image uploads and an iPhone interface are separate work.
+This public port has passed automated tests and the JavaScript build. A signed widget, physical TV installation and phone handoff have not been validated in this workspace. No rooting is required. Frame Art Mode image uploads remain separate work. The iPhone app and its native build are maintained in [Mosaicast](https://github.com/Desperado/mosaicast).
+
+To rebuild a signed widget with the Tizen CLI and an existing Samsung security profile:
+
+```sh
+npm run build
+mkdir -p .context/artifacts
+tizen build-web --output "$PWD/.context/tizen-build" -- app
+tizen package -t wgt --output "$PWD/.context/artifacts" -- "$PWD/.context/tizen-build"
+```
+
+If `tizen` is not on PATH, use its full path under your Tizen Studio installation. The package command uses the active security profile. The generated widget stays under `.context/artifacts/`; certificates, signatures and widgets are not committed.
 
 ## Development
 
 ```sh
-npm test
+npm ci
+npm run check
 ```
 
-The tests cover private host validation, endpoint restrictions, paged indices, search request formatting, serial device requests, errors, preview server protection and parsing the bundled TV script. The UI tests also run the actual bundle without `Object.hasOwn` or `Element.replaceChildren`, check Back against changed shared menus, and check dialog focus and keyboard shortcuts. Source tests cover main-zone capabilities, browsing without writes, confirmed input/power changes, unavailable Deezer/player information and blocking network playback after an external source change. Metadata tests cover independent preloading, stale responses, text-only rendering, provider matching, cache expiry and safe, size-bounded artwork proxying. `npm start` builds the app automatically. The build combines the source modules into one classic script to avoid module-loading restrictions in packaged TV widgets. Requests are serialized because MusicCast menu requests can hold the device busy for up to 30 seconds. The app validates the current menu before acting because MusicCast phone apps share its navigation state.
+`check` typechecks the shared TypeScript package, runs its tests and the TV tests, and builds the standalone Tizen bundle. `npm run test:tv` runs just the TV suite; `npm run test:shared` runs the imported protocol suite. The workspace has no React Native dependency. Shared protocol changes must stay compatible with the phone; see [provenance](docs/integration-provenance.md).
+
+The tests cover private host validation, endpoint restrictions, paged indices, search request formatting, serial device requests, errors, preview server protection and parsing the bundled TV script. The UI tests also run the actual bundle without `Object.hasOwn` or `Element.replaceChildren`, check Back against changed shared menus, and check dialog focus and keyboard shortcuts. Source tests cover main-zone capabilities, browsing without writes, confirmed input/power changes, unavailable Deezer/player information and blocking network playback after an external source change. Metadata tests cover independent preloading, stale responses, text-only rendering, provider matching, cache expiry and safe, size-bounded artwork proxying. `npm start` builds the app automatically. The build uses esbuild to bundle the shared protocol and cryptography, then combines the TV modules into one classic script to avoid module-loading restrictions in packaged TV widgets. Requests are serialized because MusicCast menu requests can hold the device busy for up to 30 seconds. The app validates the current menu before acting because MusicCast phone apps share its navigation state.
 
 Protocol reference: [pyamaha’s documented MusicCast API](https://github.com/rsc-dev/pyamaha). TV reference: [Samsung remote control](https://developer.samsung.com/smarttv/develop/guides/user-interaction/remote-control.html) and [application configuration](https://developer.samsung.com/smarttv/develop/guides/fundamentals/configuring-tv-applications.html).
 

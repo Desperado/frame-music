@@ -15,7 +15,21 @@
     "build": "node scripts/build.js",
     "prestart": "npm run build",
     "start": "node scripts/server.js",
-    "test": "node --test"
+    "test": "npm run test:shared && npm run test:tv",
+    "test:shared": "npm test --workspace @mosaicast/musiccast",
+    "pretest:tv": "npm run build --workspace @mosaicast/musiccast",
+    "test:tv": "node --test test/*.test.js",
+    "typecheck": "npm run typecheck --workspace @mosaicast/musiccast",
+    "check": "npm run typecheck && npm test && npm run build"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/musiccast"
+  ],
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
 }

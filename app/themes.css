@@ -325,3 +325,59 @@
 #main-content[data-artist-tone]:not([data-artist-tone=""]) .card-icon{background:var(--icon-bg);color:var(--green);border-color:var(--surface)}
 #main-content[data-artist-tone]:not([data-artist-tone=""]) .card-icon:before,#main-content[data-artist-tone]:not([data-artist-tone=""]) .card-arrow{color:var(--green)}
 #main-content[data-artist-tone]:not([data-artist-tone=""]) .lyrics{background:var(--surface);color:var(--ink);border-color:var(--line)}
+
+/* Clear and Glass use static translucent layers: readable on the TV without blur support. */
+html:not([data-surface=solid]) #main-content{
+  --paper:#10151c;--ink:#eef1f6;--muted:#c0c9d5;--green:#d6e1f0;--arrow:#d6e1f0;--focus:#e3cfad;--line:#657080;--error:#ffc0ac;
+  background-color:var(--paper);color:var(--ink)
+}
+html:not([data-surface=solid]) #main-content .artist-atmosphere{height:100%;min-height:43rem}
+html:not([data-surface=solid]) #main-content #artist-cover{width:88%;opacity:.48}
+html:not([data-surface=solid]) #main-content .artist-orbits{opacity:.4}
+html:not([data-surface=solid]) #main-content .artist-atmosphere:after{background:linear-gradient(90deg,#10151ce6,transparent 85%),linear-gradient(0deg,#10151c,transparent 80%)}
+html:root:not([data-surface=solid]) #main-content .menu-card,
+html:not([data-surface=solid]) #main-content .source-card,
+html:root:not([data-surface=solid]) #main-content .lyrics,
+html:not([data-surface=solid]) #main-content .track-facts{
+  background:linear-gradient(145deg,#ffffff12,#ffffff03 48%),#101923a6;
+  border:1px solid #c7d8ed38;box-shadow:inset 0 1px 0 #ffffff14,0 .25rem 1rem #0003;color:var(--ink)
+}
+html:root:not([data-surface=solid]) #main-content .menu-card:focus,
+html:not([data-surface=solid]) #main-content .source-card:focus-within{
+  background:linear-gradient(145deg,#ffffff24,#ffffff08 65%),#253446d9;
+  border-color:#e3cfad;outline-color:var(--focus);box-shadow:0 0 0 .18rem #10151c,inset 0 1px 0 #ffffff30
+}
+html:not([data-surface=solid]) #main-content .card-copy strong{color:#f1f4f8;text-shadow:0 1px 3px #000b;-webkit-line-clamp:3}
+html:root:not([data-surface=solid]) #main-content .card-arrow{color:#d6e1f0}
+html:root:not([data-surface=solid]) #main-content .card-icon{background:#b4c9e51a;color:#d6e1f0;border-color:#b4c9e533}
+html:root:not([data-surface=solid]) #main-content .card-icon:before{color:#d6e1f0}
+html:not([data-surface=solid]) #main-content .quiet{background:#10192399;color:#e1e9f4;border-color:#c7d8ed40}
+html:not([data-surface=solid]) #main-content .track-facts{padding:1rem;border-radius:var(--radius);width:100%}
+@media(min-width:1400px){
+  html:not([data-surface=solid])[data-designed=true] .track-overview{flex-direction:row}
+  html:not([data-surface=solid])[data-designed=true] .track-overview .detail-art{width:9rem;height:9rem}
+}
+html:not([data-surface=solid]) #main-content h1,
+html:not([data-surface=solid]) #main-content .menu-preview h2{text-shadow:0 2px 12px #000c}
+/* Clear reduces panel coverage while retaining local contrast and remote focus. */
+html[data-surface=clear] #main-content #artist-cover{width:100%;opacity:.72}
+html[data-surface=clear] #main-content .artist-orbits{opacity:.64}
+html[data-surface=clear] #main-content .artist-atmosphere:after{background:linear-gradient(90deg,#10151c80,transparent 90%),linear-gradient(0deg,#10151ca6,transparent 65%)}
+html:root[data-surface=clear] #main-content .menu-card,
+html[data-surface=clear] #main-content .source-card,
+html:root[data-surface=clear] #main-content .lyrics,
+html[data-surface=clear] #main-content .track-facts{
+  background:linear-gradient(90deg,#101923a6,#10192373);border-color:transparent;box-shadow:none;text-shadow:0 1px 3px #000,0 2px 8px #000
+}
+html:root[data-surface=clear] #main-content .menu-card:focus,
+html[data-surface=clear] #main-content .source-card:focus-within{
+  background:#182535ad;border-color:#e3cfad;outline-color:var(--focus);box-shadow:0 0 0 .18rem #10151c
+}
+html:root[data-surface=clear] #main-content .card-icon{background:#10192340;border-color:transparent;box-shadow:none}
+html[data-surface=clear] #main-content .quiet{background:#10192373}
+.surface-options,.help-topics{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}
+.surface-options button[aria-pressed=true],.help-topics button[aria-pressed=true]{background:var(--green);color:var(--on-accent);border-color:var(--green)}
+.help-sections h3{font-size:1.1rem;margin:.8rem 0}
+.help-sections p{color:var(--muted)}
+.overlay .dialog{max-height:90vh;overflow:auto}
+.overlay.help-overlay .dialog{width:42rem}

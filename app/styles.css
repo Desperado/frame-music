@@ -24,6 +24,10 @@ main{scroll-padding:1rem 1rem 2rem}
 .exit-actions{display:flex;flex-direction:column;gap:.8rem;margin-top:1.5rem}
 .exit-actions .quiet{text-align:center;padding:.8rem}
 @media(prefers-reduced-motion:reduce){button{transition:none}}
+.companion-overlay .dialog{max-height:92vh;overflow-y:auto}
+#companion-fields,#companion-results{display:flex;flex-direction:column;gap:.7rem;width:100%;min-width:0}
+#companion-discovery-status{margin:.2rem 0;font-size:.65rem;color:var(--muted)}
+#companion-results button,#find-companions{padding:.55rem .65rem;font-size:.65rem;border:1px solid var(--line);background:var(--surface);overflow-wrap:anywhere}
 .track-overview{display:flex;gap:1.8rem;align-items:center;margin:1rem 0 1.6rem}
 .track-overview .detail-art{width:11rem;height:11rem;border-radius:.7rem}
 .detail-art .sun{width:4rem;height:4rem;left:1.5rem;top:1rem}.detail-art .landscape{width:16rem;height:10rem;left:-2rem;top:6rem}.detail-art .landscape:after{width:13rem;height:10rem;left:6rem}
