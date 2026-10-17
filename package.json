@@ -1,0 +1,21 @@
+{
+  "name": "frame-music",
+  "version": "0.1.0",
+  "description": "A Samsung Tizen TV music controller for Yamaha MusicCast devices.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Desperado/frame-music.git"
+  },
+  "bugs": "https://github.com/Desperado/frame-music/issues",
+  "homepage": "https://github.com/Desperado/frame-music#readme",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "prestart": "npm run build",
+    "start": "node scripts/server.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22" }
+}
