@@ -29,8 +29,9 @@ export async function pairFrame(url) {
 }
 export function companionFeatures(snapshot) {
   const f = snapshot.features;
+  const connectivity = { wired_lan: 'Ethernet', wireless_lan: 'Wi-Fi', wireless_direct: 'Wireless Direct', airplay: 'AirPlay', bluetooth_tx_setting: 'Bluetooth output', network_standby: 'Network standby' };
   return {
-    system: { func_list: f.connectivity, input_list: f.sources.map(s => ({ id: s.id, play_info_type: s.networkPlayer ? 'netusb' : s.tuner ? 'tuner' : 'none' })) },
+    system: { func_list: Object.keys(connectivity).filter(id => f.connectivity.includes(connectivity[id])), input_list: f.sources.map(s => ({ id: s.id, play_info_type: s.networkPlayer ? 'netusb' : s.tuner ? 'tuner' : 'none', browsable: companionAPI.canBrowseSource(s) })) },
     zone: [{ id: 'main', func_list: f.controls.filter(c => c !== 'prepare_input_change'), input_list: f.sources.map(s => s.id), range_step: f.volumeRange ? [{ id: 'volume', ...f.volumeRange }] : [] }],
     tuner: { func_list: f.tuner?.bands || [] },
   };

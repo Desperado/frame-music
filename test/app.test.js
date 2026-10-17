@@ -1184,6 +1184,37 @@ test('saved demo and missing companion credentials never fall back to the saved 
   }
 });
 
+test('the TV bundle hides unsupported paired menus and keeps their input and playback controls', async () => {
+  const snapshot = { model: 'Shared fixture', features: { controls: ['power'], connectivity: ['Ethernet', 'Wi-Fi', 'Bluetooth output'], sources: ['deezer', 'tidal'].map(id => ({ id, name: id, networkPlayer: true })) }, status: { power: 'on', input: 'deezer' }, track: { title: 'Fixture song', artist: '', album: '', playback: 'pause' }, trackUnavailable: false };
+  const commands = [];
+  const coordinator = new shared.CompanionCoordinator({ read: async () => snapshot, execute: async command => {
+    commands.push(command);
+    if (command.type === 'input') snapshot.status.input = command.value;
+    if (command.type === 'playback') snapshot.track.playback = command.value;
+    return snapshot;
+  } }, 'ui-fixture');
+  const pairing = { url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex') };
+  const phone = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const app = await launch({ keymanager: { getData: () => JSON.stringify(pairing) } }, {
+    storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+      const result = await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+      return { ok: true, text: async () => JSON.stringify(result) };
+    }
+  });
+  app.nodes.get('refresh').click(); await app.settle();
+  app.nodes.get('sources').click(); await app.settle();
+  const buttons = app.nodes.get('source-list').querySelectorAll('button').map(button => button.getAttribute('aria-label'));
+  assert.ok(buttons.includes('Browse Deezer'));
+  assert.ok(!buttons.includes('Browse TIDAL'));
+  assert.match(app.nodes.get('capability-list').textContent, /Ethernet.*Wi-Fi.*Bluetooth output/);
+  sourceButton(app, 'Switch Yamaha input to TIDAL').click(); await app.settle();
+  assert.equal(snapshot.status.input, 'tidal');
+  assert.equal(app.nodes.get('toggle-play').disabled, false);
+  app.nodes.get('toggle-play').click(); await app.settle();
+  assert.deepEqual(commands, [{ type: 'input', value: 'tidal' }, { type: 'playback', value: 'play' }]);
+  assert.equal(app.calls.length, 0);
+});
+
 test('a companion menu stall leaves Now Playing and themes usable and cannot steal their focus on completion', async () => {
   const snapshot = {model: 'Shared fixture', features: {controls: ['volume', 'mute'], connectivity: [], sources: [{id: 'deezer', name: 'Deezer', networkPlayer: true}], volumeRange: {min: 0, max: 30, step: 1}}, status: {power: 'on', input: 'deezer', volume: 10, mute: false}, trackUnavailable: false};
   const page = {input: 'deezer', token: 'menu-fixture', layer: 0, title: 'Deezer', index: 0, total: 1, items: [{index: 0, text: 'Charts', selectable: true, playable: false, searchable: false}]};

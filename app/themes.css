@@ -328,7 +328,7 @@
 
 /* Clear and Glass use static translucent layers: readable on the TV without blur support. */
 html:not([data-surface=solid]) #main-content{
-  --paper:#10151c;--ink:#eef1f6;--muted:#c0c9d5;--green:#d6e1f0;--arrow:#d6e1f0;--focus:#e3cfad;--line:#657080;--error:#ffc0ac;
+  --paper:#10151c;--surface:#1b202c;--ink:#eef1f6;--muted:#c0c9d5;--green:#d6e1f0;--arrow:#d6e1f0;--focus:#e3cfad;--line:#657080;--error:#ffc0ac;
   background-color:var(--paper);color:var(--ink)
 }
 html:not([data-surface=solid]) #main-content .artist-atmosphere{height:100%;min-height:43rem}

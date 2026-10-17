@@ -86,6 +86,8 @@ The CD-NT670D advertised these 16 inputs during a read-only local probe:
 | FM / DAB radio | Switch input; companion mode adds capability-driven tuning, presets and DAB scan in Now Playing |
 | CD, Optical input, AUX | Switch input; use the Yamaha remote for source-specific controls |
 
+In companion mode, Browse is available for Deezer, PC / NAS, Internet radio and USB when advertised as network-player inputs. Other advertised inputs remain selectable, and network-player inputs keep their playback controls.
+
 Its capability overview includes Ethernet, Wi-Fi, Wireless Direct, Bluetooth input/output, AirPlay, network and automatic standby, power, sleep timer, volume/mute, recent listening, play queue, MusicCast playlists, FM/DAB, linking/audio quality and up to nine multiroom clients. These describe what the Yamaha reports supporting, not which connections are active. Network setup, Bluetooth pairing/output settings, CD transport, standalone station tuning, sleep settings, queue management and multiroom group creation are not exposed in this version.
 
 Advertised streaming services can remain in older firmware even when unavailable. Accounts, subscriptions and regional availability are managed through Yamaha and the providers. See [Yamaha’s CD-NT670D product information](https://uk.yamaha.com/en/audio/home-audio/products/hifi-components/cd-nt670d/). This app does not bypass subscriptions or configure accounts.
