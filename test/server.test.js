@@ -63,6 +63,7 @@ test('artwork proxy restricts the host, path, origin and response type and bound
   mode = 'html'; assert.equal((await fetch(imageUrl())).status, 502);
   mode = 'large'; assert.equal((await fetch(imageUrl())).status, 502);
   const page = await fetch(root); assert.match(page.headers.get('content-security-policy'), /connect-src 'self' https:\/\/lrclib.net https:\/\/\*:8093 http:\/\/\*:8095;/);
+  assert.match(page.headers.get('content-security-policy'), /(?:^|;\s*)img-src 'self' data:;/);
 });
 
 test('capability response exposes supported connectivity only and input switching preserves proxy validation', async t => {
