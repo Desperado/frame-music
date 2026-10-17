@@ -4,22 +4,22 @@ This checklist covers work outside the source tree as well as release preparatio
 
 ## Initial publication
 
-The owner selected a separate public repository, `Desperado/frame-music`, with a clean source snapshot. The original development repository remains private. Its history, branches, pull requests, issues, attachments, Actions logs and artifacts are not copied to the public repository.
+Published on 2026-10-17 in a separate public repository, [Desperado/frame-music](https://github.com/Desperado/frame-music), from a clean source snapshot. The original development repository remains private. Its history, branches, pull requests, issues, attachments, Actions logs and artifacts were not copied to the public repository.
 
-- [ ] Scan the exact source snapshot and its new Git history with a redacting secret scanner before publication. Review the file inventory for signing material, personal/device data and content without redistribution rights. Never print secret values; arrange any required rotation with the credential owner.
+- [x] Scan the exact source snapshot and its new Git history with a redacting secret scanner before publication. The reviewed 53-file snapshot and new history produced zero matches with Gitleaks 8.30.1. The inventory excludes signing material, personal/device dumps and fetched media. Scanning does not guarantee the absence of secrets; repeat it for future publications and arrange any required rotation with the credential owner.
 - [x] The owner confirmed the right to license the project's original code and artwork under [MIT](LICENSE), and clarified that the only externally obtained artwork was the removed Yamaha logo. The bundled fonts retain separate OFL notices. See [provenance](PROVENANCE.md).
 - [x] Replace the official Yamaha logo with original artwork. Exclude the private development history containing the logo from the clean publication. See [third-party notices](THIRD_PARTY_NOTICES.md).
 - [x] Review source examples and artwork: app icon, demo cover, demo lyrics and orbital illustration are project material. Exclude fetched lyrics/covers, screenshots, personalised bundles and private device dumps.
 - [x] The owner confirmed that the security/conduct contact in [SECURITY.md](SECURITY.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is monitored.
-- [ ] Publish only the reviewed snapshot with the licensing, notices and community files on its default branch. Verify the original repository remains private. Keep npm publication separate.
+- [x] Publish only the reviewed snapshot with the licensing, notices and community files on its default branch. The original repository's private visibility was verified after publication. npm publication remains disabled.
 
 ## GitHub settings
 
-- [ ] Enable Issues and private vulnerability reporting. Verify the private reporting link works from a contributor account.
-- [ ] Enable secret scanning and push protection where available. Review alerts privately; do not expose secret values.
-- [ ] Enable GitHub Actions with read-only default token permissions, require approval for workflows from new external contributors, and avoid running untrusted PR code with secrets or write permissions. This repository's workflow uses `pull_request`, no deployment secrets and pinned action commits.
-- [ ] Protect `master`: require pull requests, review and the `Test and build (22)` / `Test and build (24)` CI checks; block force pushes and deletion. Confirm the actual check names after the first run.
-- [ ] Set the repository description and relevant topics (for example `musiccast`, `tizen`, `samsung-tv`, `yamaha`, `javascript`). Verify GitHub detects the MIT license and that README, contribution, conduct and security links resolve.
+- [x] Enable Issues and private vulnerability reporting. Verified through GitHub's API; the security policy links to the new repository's reporting form. Access from a separate contributor account has not been tested; the monitored email remains a fallback.
+- [x] Enable secret scanning, push protection and Dependabot alerts. Review alerts privately; do not expose secret values.
+- [x] Enable GitHub Actions with read-only default token permissions and approval for all external fork contributors. Only `actions/checkout` and `actions/setup-node` are allowed, and full commit SHA pins are enforced. The workflow uses `pull_request` and no deployment secrets; Actions cannot approve pull requests.
+- [x] Protect `master`: require pull requests, one approving review and the confirmed `Test and build (22)` / `Test and build (24)` checks; require branches to be current, linear history and resolved conversations; block force pushes and deletion. The repository administrator retains GitHub's protection bypass for solo maintenance.
+- [x] Set the repository description and topics. GitHub detects MIT and recognizes the README, contribution and conduct files; all 36 local Markdown links resolve. Initial hosted CI passed on Node.js 22 and 24, including all 91 tests and the generic build.
 
 ## For every release
 
