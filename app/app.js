@@ -467,18 +467,23 @@ async function finishQRPairing(url, invitation, attempt) {
   $('retry-qr').hidden = true;
   $('pairing-qr').hidden = true;
   $('qr-status').textContent = pairingCopy.tvQRConnecting;
-  if (!pendingPair) {
-    const pending = await pairFrame(url, invitation);
+  try {
+    if (!pendingPair) {
+      const pending = await pairFrame(url, invitation);
+      if (attempt !== pairingAttempt || $('overlay').hidden) return;
+      pendingPair = { ...pending, url };
+    }
+    rememberPairingMode();
+    const pairing = await pendingPair.confirm();
+    // A closed dialog must still remember a completed save, without changing its screen.
+    saveMode('companion');
     if (attempt !== pairingAttempt || $('overlay').hidden) return;
-    pendingPair = { ...pending, url };
+    $('qr-status').textContent = pairingCopy.tvQRSaved;
+    await connect(pairing.receiver, false, pairing, true);
+  } catch (error) {
+    if (attempt === pairingAttempt && !$('overlay').hidden) $('retry-qr').hidden = false;
+    throw error;
   }
-  rememberPairingMode();
-  const pairing = await pendingPair.confirm();
-  // A closed dialog must still remember a completed save, without changing its screen.
-  saveMode('companion');
-  if (attempt !== pairingAttempt || $('overlay').hidden) return;
-  $('qr-status').textContent = pairingCopy.tvQRSaved;
-  await connect(pairing.receiver, false, pairing, true);
 }
 async function searchQRPhone(attempt) {
   if (attempt !== pairingAttempt || !qrInvitation || $('overlay').hidden) return;
@@ -496,7 +501,6 @@ async function searchQRPhone(attempt) {
   if (phone && !busy) {
     $('retry-qr').dataset.url = phone;
     await action(() => finishQRPairing(phone, qrInvitation, attempt));
-    if (attempt === pairingAttempt && !$('overlay').hidden) $('retry-qr').hidden = false;
   } else {
     if (!searchFailed && qrInvitation.expires - Date.now() < 270000) $('qr-status').textContent = pairingCopy.tvQRSlow;
     qrSearchTimer = setTimeout(() => { void searchQRPhone(attempt); }, 2000);

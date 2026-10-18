@@ -1342,6 +1342,11 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
     assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
     assert.match(app.nodes.get('dialog-error').textContent, /Could not save/);
     assert.equal(app.nodes.get('retry-qr').hidden, false);
+    for (let retry = 0; retry < 2; retry++) {
+      app.nodes.get('retry-qr').click(); await app.settle();
+      assert.equal(app.nodes.get('retry-qr').hidden, false, 'every failed attempt keeps Retry available');
+      assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
+    }
     app.nodes.get('close-dialog').click();
   } else {
     assert.equal(phoneSaves, 1); assert.equal(records.size, 1);
