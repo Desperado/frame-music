@@ -1293,7 +1293,7 @@ test('shared setup automatically discovers the coordinator without pairing, devi
   app.nodes.get('manual-pairing').click();
   const focused = app.document.activeElement;
   for (let i = 0; i < 3; i++) await app.settle();
-  assert.equal(requests.length, 265);
+  assert.equal(requests.length, 253, 'the cancelled QR lookup must not start probes before the manual search');
   assert.ok(requests.every(({ options }) => options.method === 'GET' && !options.body && !options.headers));
   assert.equal(app.nodes.get('companion-results').children.length, 1);
   assert.equal(app.nodes.get('dialog-input').value, 'http://192.168.1.10:8095');
@@ -1306,6 +1306,7 @@ test('leaving shared setup cancels all discovery probes and ignores late results
   const app = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
     discoveryFetch: (_url, options) => new Promise(resolve => probes.push({ options, resolve })) });
   app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  await app.settle();
   assert.equal(probes.length, 12);
   app.nodes.get('close-dialog').click();
   assert.ok(probes.every(({ options }) => options.signal.aborted));
@@ -1322,7 +1323,9 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
   const coordinator = new shared.CompanionCoordinator({ read: async () => state }, 'fixture');
   const phone = new shared.PhonePeerService('192.168.1.20', 'http://192.168.1.10:8095', coordinator, n => new Uint8Array(randomBytes(n)), undefined, async record => { phoneRecord = record; phoneSaves++; });
   const missing = () => Object.assign(new Error('Missing'), { name: 'NotFoundError' });
-  const tizen = { keymanager: {
+  const tizen = { systeminfo: { getPropertyValue(property, success) {
+    success(property === 'NETWORK' ? { networkType: 'ETHERNET' } : { status: 'CONNECTED', ipAddress: '192.168.1.30' });
+  } }, keymanager: {
     getData({ name }) { if (!records.has(name)) throw missing(); return records.get(name); },
     removeData({ name }) { if (!records.delete(name)) throw missing(); },
     saveData(name, raw, _password, success) { records.set(name, raw); success(); },
@@ -1331,7 +1334,7 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
     const value = String(url).includes('192.168.1.10:') ? await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined) : {};
     return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(value) };
   };
-  const app = await launch(tizen, { storage, storageUnavailable: unavailable, webapis: { network: { getIp: () => '192.168.1.30' } }, companionFetch,
+  const app = await launch(tizen, { storage, storageUnavailable: unavailable, companionFetch,
     onInvitation: code => phone.acceptInvitation(code.text) });
   app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
   for (let i = 0; i < 8; i++) await app.settle();
@@ -1339,14 +1342,17 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
     assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
     assert.match(app.nodes.get('dialog-error').textContent, /Could not save/);
     assert.equal(app.nodes.get('retry-qr').hidden, false);
+    for (let retry = 0; retry < 2; retry++) {
+      app.nodes.get('retry-qr').click(); await app.settle();
+      assert.equal(app.nodes.get('retry-qr').hidden, false, 'every failed attempt keeps Retry available');
+      assert.equal(phoneSaves, 0); assert.equal(records.size, 0);
+    }
     app.nodes.get('close-dialog').click();
   } else {
     assert.equal(phoneSaves, 1); assert.equal(records.size, 1);
     assert.equal(storage.get('mosaicast-mode'), 'companion');
     assert.equal(app.nodes.get('overlay').hidden, true);
-    assert.equal(app.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
-    app.nodes.get('refresh').click(); await app.settle();
-    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+    assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED', 'new QR setup completes its read-only refresh automatically');
     assert.ok([...records.values()].some(raw => JSON.parse(raw).record.key === phoneRecord.key));
     const restarted = await launch(tizen, { storage, companionFetch });
     assert.equal(restarted.nodes.get('connection-badge').textContent, 'REFRESH CONNECTION');
@@ -1365,4 +1371,117 @@ test('pairing QR is discarded on backgrounding and closing', async () => {
   app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
   app.nodes.get('refresh-qr').click(); app.nodes.get('close-dialog').click();
   assert.equal(app.nodes.get('overlay').hidden, true);
+});
+
+
+test('QR setup explains unavailable discovery and slow phone discovery without a false success', async () => {
+  const denied = await launch();
+  denied.nodes.get('settings').click(); denied.nodes.get('pair-companion').click(); await denied.settle();
+  assert.match(denied.nodes.get('qr-status').textContent, /Could not search/);
+  assert.equal(denied.nodes.get('pairing-qr').hidden, false);
+  denied.nodes.get('close-dialog').click();
+  const slow = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
+    discoveryFetch: async () => ({ ok: true, headers: { get: () => null }, text: async () => '{}' }) });
+  slow.nodes.get('settings').click(); slow.nodes.get('pair-companion').click();
+  for (let i = 0; i < 8; i++) await slow.settle();
+  slow.advance(31000);
+  for (let i = 0; i < 8; i++) await slow.settle();
+  assert.match(slow.nodes.get('qr-status').textContent, /Still looking/);
+  assert.equal(slow.nodes.get('overlay').hidden, false);
+  assert.equal(slow.nodes.get('retry-qr').hidden, true);
+  slow.nodes.get('close-dialog').click();
+});
+
+
+test('a shared Refresh clears the TV recovery warning without hiding unrelated errors', async () => {
+  const snapshot = {model: 'Shared fixture', features: {controls: ['volume'], connectivity: [], sources: [{id: 'deezer', name: 'Deezer', networkPlayer: true}], volumeRange: {min: 0, max: 30, step: 1}}, status: {power: 'on', input: 'deezer', volume: 10}, trackUnavailable: false};
+  let readFailed = false, finishCommand;
+  const coordinator = new shared.CompanionCoordinator({read: async () => { if (readFailed) throw new Error('receiver unavailable'); return snapshot; }, execute: async () => { await new Promise(resolve => { finishCommand = resolve; }); return snapshot; }}, 'ui-fixture');
+  const pairing = {url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex')};
+  const phone = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {
+    storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+      const result = await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+      return {ok: true, text: async () => JSON.stringify(result)};
+    }
+  });
+  coordinator.invalidate(); await app.poll();
+  assert.match(app.nodes.get('message').textContent, /[Cc]hoose Refresh/);
+  assert.equal(app.nodes.get('volume-up').disabled, true);
+  const handset = new shared.CompanionController(pairing.receiver, phone.localExchange);
+  await handset.reconcile(); await app.poll();
+  assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+  assert.equal(app.nodes.get('message').textContent, '');
+  assert.equal(app.nodes.get('volume-up').disabled, false);
+  const pending = handset.execute({type: 'volume', value: 'up'});
+  await app.settle(); await app.poll();
+  assert.equal(coordinator.state.activity, 'command');
+  assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED', 'ordinary phone activity keeps a stable connection badge');
+  assert.equal(app.nodes.get('message').textContent, '');
+  finishCommand(); await pending;
+  readFailed = true; await coordinator.poll(); await app.poll();
+  assert.equal(app.nodes.get('connection-badge').textContent, 'RECONNECTING');
+  assert.match(app.nodes.get('message').textContent, /Reconnecting/);
+  assert.doesNotMatch(app.nodes.get('message').textContent, /one minute|Refresh/);
+  assert.equal(app.nodes.get('volume-up').disabled, true);
+  readFailed = false; await coordinator.poll(); await app.poll();
+  assert.equal(app.nodes.get('connection-badge').textContent, 'COMPANION CONNECTED');
+  assert.equal(app.nodes.get('message').textContent, '');
+  assert.equal(app.nodes.get('volume-up').disabled, false);
+  app.nodes.get('message').textContent = 'Deezer menu unavailable';
+  await coordinator.poll(); await app.poll();
+  assert.equal(app.nodes.get('message').textContent, 'Deezer menu unavailable');
+  assert.equal(app.calls.length, 0);
+});
+
+test('TV offers menu takeover beside Browse and follows the phone page without moving local navigation', async () => {
+  const snapshot = {model: 'Shared fixture', features: {controls: ['volume'], connectivity: [], sources: [{id: 'deezer', name: 'Deezer', networkPlayer: true}, {id: 'usb', name: 'USB', networkPlayer: true}], volumeRange: {min: 0, max: 30, step: 1}}, status: {power: 'on', input: 'deezer', volume: 10}, trackUnavailable: false};
+  let revision = 0, title = 'Deezer', writes = 0;
+  const page = input => ({input, token: String(++revision), layer: title === 'Deezer' ? 0 : 1, title, index: 0, total: 1, items: [{index: 0, text: title === 'Deezer' ? 'Charts' : 'Popular songs', selectable: true, playable: false, searchable: false}]});
+  const coordinator = new shared.CompanionCoordinator({read: async () => snapshot, execute: async () => { writes++; return snapshot; }, browse: async input => page(input), browseAction: async () => { writes++; title = 'Charts'; return {page: page('deezer')}; }}, 'menu-ui');
+  const pairing = {url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex')};
+  const service = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const companionFetch = async (url, options = {}) => {
+    const result = await service.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+    return {ok: true, text: async () => JSON.stringify(result)};
+  };
+  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {storage: new Map([['mosaicast-mode', 'companion']]), companionFetch});
+  app.nodes.get('refresh').click(); await app.settle();
+  const phone = new shared.CompanionController(pairing.receiver, service.localExchange);
+  await phone.browse('deezer');
+  sourceButton(app, 'Browse Deezer').click(); await app.settle();
+  const takeover = app.nodes.get('continue-menu');
+  assert.match(app.nodes.get('message').textContent, /Take over menu/);
+  assert.equal(takeover.hidden, false);
+  assert.equal(takeover.dataset.input, 'deezer');
+  assert.equal(app.nodes.get('overlay').hidden, true);
+  takeover.focus(); app.key('Enter', 13); await app.settle();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Deezer');
+  assert.equal(takeover.hidden, true); assert.equal(writes, 0);
+
+  const remote = await phone.browse('deezer', 0, true);
+  await phone.browseAction({type: 'select', token: remote.token, index: 0});
+  await app.poll();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Charts');
+  assert.match(app.nodes.get('menu').textContent, /Popular songs/);
+  const focused = app.document.activeElement;
+  await app.poll();
+  assert.equal(app.document.activeElement, focused, 'unchanged pages must not rebuild the menu');
+  title = 'Updated Charts'; revision--;
+  await phone.browse('deezer'); await app.poll();
+  assert.equal(app.nodes.get('menu-title').textContent, 'Updated Charts', 'changed contents must update even if a restarted coordinator reuses a token');
+  assert.equal(writes, 1, 'following the phone is read-only');
+  app.nodes.get('menu').children[0].click(); await app.settle();
+  assert.equal(writes, 1, 'following a page cannot borrow the phone lease');
+  assert.equal(takeover.hidden, false);
+  app.nodes.get('now-playing').click();
+  await phone.browse('deezer'); await app.poll();
+  assert.equal(app.nodes.get('track-panel').hidden, false, 'phone navigation must not open Browse over Now Playing');
+
+  app.nodes.get('sources').click();
+  sourceButton(app, 'Browse USB').click(); await app.settle();
+  assert.equal(takeover.dataset.input, 'usb');
+  takeover.click(); await app.settle();
+  assert.equal(app.nodes.get('browse-label').textContent, 'USB');
+  assert.equal(writes, 1, 'explicit takeover only reads the requested menu');
 });

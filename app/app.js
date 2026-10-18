@@ -1,4 +1,4 @@
-import { FrameCompanion, findFrameCompanions, pairFrame, frameInvitation, savedCompanion, companionFeatures, companionStatus, companionInfo, companionTuner } from './companion.js';
+import { FrameCompanion, findFrameCompanions, pairFrame, frameInvitation, savedCompanion, companionFeatures, companionStatus, companionInfo, companionTuner, companionMenu } from './companion.js';
 import { MusicCast, transport, entries, soundControls, sources, sourceName, deviceCapabilities, privateIPv4 } from './protocol.js';
 import { demoTransport } from './demo.js';
 import { LyricsLoader, artworkUrl, trackKey } from './metadata.js';
@@ -56,7 +56,11 @@ let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0, heldArrow, press
 const lyricsLoader = new LyricsLoader();
 const icons = { Flow: '≈', Charts: '↗', Recommendations: '✧', Mixes: '♫', Genres: '◈', 'My library': '▤', Search: '⌕' };
 
+const companionRecoveryMessage = 'Connection changed or an action needs checking. Choose Refresh to read the current Yamaha state.';
+const companionReconnectingMessage = 'Connection interrupted. Reconnecting to iPhone and Yamaha… Keep Mosaicast open on your iPhone.';
+
 function message(text, error = false) {
+  if (!text) { $('continue-menu').hidden = true; delete $('continue-menu').dataset.input; }
   $('message').textContent = text;
   $('message').classList.toggle('error', error);
 }
@@ -69,6 +73,11 @@ async function action(work) {
   try { await work(); message(''); }
   catch (error) {
     message(error.message, true);
+    if (['owned', 'companionOwned', 'browseChanged'].includes(error.code) && error.menuInput) {
+      $('continue-menu').dataset.input = error.menuInput;
+      $('continue-menu').textContent = `Take over ${sourceName(error.menuInput)} menu`;
+      $('continue-menu').hidden = false;
+    }
     if (!$('overlay').hidden) $('dialog-error').textContent = error.message;
   } finally { busy = false; $('menu').setAttribute('aria-busy', 'false'); }
 }
@@ -462,37 +471,45 @@ function manualPairing(visible) {
 async function finishQRPairing(url, invitation, attempt) {
   client?.setActive?.(false);
   if (client?.pending) throw new Error('Wait for the current Yamaha operation to finish.');
-  $('retry-qr').hidden = false;
-  if (!pendingPair) {
-    const pending = await pairFrame(url, invitation);
+  $('retry-qr').hidden = true;
+  $('pairing-qr').hidden = true;
+  $('qr-status').textContent = pairingCopy.tvQRConnecting;
+  try {
+    if (!pendingPair) {
+      const pending = await pairFrame(url, invitation);
+      if (attempt !== pairingAttempt || $('overlay').hidden) return;
+      pendingPair = { ...pending, url };
+    }
+    rememberPairingMode();
+    const pairing = await pendingPair.confirm();
+    // A closed dialog must still remember a completed save, without changing its screen.
+    saveMode('companion');
     if (attempt !== pairingAttempt || $('overlay').hidden) return;
-    pendingPair = { ...pending, url };
+    $('qr-status').textContent = pairingCopy.tvQRSaved;
+    await connect(pairing.receiver, false, pairing, true);
+  } catch (error) {
+    if (attempt === pairingAttempt && !$('overlay').hidden) $('retry-qr').hidden = false;
+    throw error;
   }
-  $('retry-qr').hidden = false;
-  rememberPairingMode();
-  const pairing = await pendingPair.confirm();
-  // A closed dialog must still remember a completed save, without changing its screen.
-  saveMode('companion');
-  if (attempt !== pairingAttempt || $('overlay').hidden) return;
-  $('qr-status').textContent = pairingCopy.tvQRSaved;
-  await connect(pairing.receiver, false, pairing);
 }
 async function searchQRPhone(attempt) {
   if (attempt !== pairingAttempt || !qrInvitation || $('overlay').hidden) return;
   if (qrInvitation.expires <= Date.now()) { $('qr-status').textContent = pairingCopy.tvQRExpired; $('pairing-qr').removeAttribute('src'); return; }
   const search = new AbortController(); companionSearch = search;
-  let phone;
+  let phone, searchFailed = false;
   try {
     await findFrameCompanions(search.signal, device => {
       if (device.invitation === qrInvitation.id) { phone = device.url; search.abort(); }
     });
-  } catch { /* Manual pairing remains available if discovery is denied. */ }
+  } catch { searchFailed = true; }
   finally { if (companionSearch === search) companionSearch = undefined; }
   if (attempt !== pairingAttempt || $('overlay').hidden) return;
+  if (searchFailed) $('qr-status').textContent = pairingCopy.tvQRSearchFailed;
   if (phone && !busy) {
     $('retry-qr').dataset.url = phone;
     await action(() => finishQRPairing(phone, qrInvitation, attempt));
   } else {
+    if (!searchFailed && qrInvitation.expires - Date.now() < 270000) $('qr-status').textContent = pairingCopy.tvQRSlow;
     qrSearchTimer = setTimeout(() => { void searchQRPhone(attempt); }, 2000);
     qrSearchTimer?.unref?.();
   }
@@ -502,7 +519,7 @@ function showPairingQR() {
   manualPairing(false); $('retry-qr').hidden = true; $('dialog-error').textContent = '';
   try {
     const code = frameInvitation(savedHost()); qrInvitation = code.invitation;
-    $('pairing-qr').src = code.image; $('qr-status').textContent = pairingCopy.tvQRWaiting;
+    $('pairing-qr').src = code.image; $('pairing-qr').hidden = false; $('qr-status').textContent = pairingCopy.tvQRWaiting;
     void searchQRPhone(attempt);
   } catch (error) { $('dialog-error').textContent = error.message; }
 }
@@ -526,7 +543,7 @@ async function searchCompanions() {
     });
     if (!controller.signal.aborted) {
       if (devices.length === 1 && $('dialog-input').value === 'http://') $('dialog-input').value = devices[0].url;
-      $('companion-discovery-status').textContent = devices.length ? 'Choose your phone, then compare the code on both screens.' : 'No phone found. Open Connect phone + TV on your iPhone, check Wi-Fi, or enter its address.';
+      $('companion-discovery-status').textContent = devices.length ? 'Choose your phone, then compare the code on both screens.' : 'No phone found. Open Connect phone + TV on your iPhone, check the home network, or enter its address.';
     }
   } catch {
     if (!controller.signal.aborted) $('companion-discovery-status').textContent = 'Local discovery unavailable. Enter the phone address, or check network permissions and search again.';
@@ -614,11 +631,14 @@ function savedHost() {
   return privateIPv4(host) ? host : bundledYamahaHost;
 }
 
-async function connect(host, demo = false, pairing) {
+async function connect(host, demo = false, pairing, newlyPaired = false) {
   const candidate = pairing ? new FrameCompanion(pairing) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
   connectingClient = candidate;
   candidate.setActive?.(document.visibilityState === 'visible');
   try {
+  // Completing an explicit new pairing includes its first read-only refresh.
+  // Restores and uncertain operations still require the existing Refresh action.
+  if (newlyPaired) await candidate.reconcile();
   const device = await candidate.request('system/getDeviceInfo');
   const capabilities = await candidate.request('system/getFeatures');
   const available = sources(capabilities);
@@ -627,7 +647,7 @@ async function connect(host, demo = false, pairing) {
   const state = await playerState(candidate, capabilities, status);
   const initial = available.find(item => item.id === 'deezer' && item.browse);
   let menu, menuError;
-  if (initial) { try { menu = await candidate.list(0, initial.id); } catch (error) { menuError = error.message; } }
+  if (initial && !newlyPaired) { try { menu = await candidate.list(0, initial.id); } catch (error) { menuError = error.message; } }
   if (status.power === 'standby' && menu && !Number(menu.max_line)) menu = undefined;
   $('source-error').textContent = menuError ? `Deezer menu unavailable: ${menuError}` : '';
   stopCompanionWatch?.();
@@ -649,15 +669,21 @@ async function connect(host, demo = false, pairing) {
       features = companionFeatures(observed.snapshot);
       renderPlayer(companionInfo(observed.snapshot), companionStatus(observed.snapshot)); renderSound(companionStatus(observed.snapshot));
     }
-    const state = candidate.controller.state;
+    // Follow the shared page while browsing, without changing local navigation.
+    const menu = observed.browse;
+    if (!busy && !sourceView && !trackView && menu?.input === browsingInput && (menu.token !== list?.token || JSON.stringify(menu) !== JSON.stringify(candidate.page))) {
+      candidate.page = menu;
+      menuParents.length = 0;
+      renderMenu(companionMenu(menu), null);
+    }
     const blocked = observed.stale || observed.needsRefresh;
-    $('connection-badge').textContent = blocked ? 'REFRESH CONNECTION' : state?.activity ? 'YAMAHA BUSY' : 'COMPANION CONNECTED';
+    $('connection-badge').textContent = observed.needsRefresh ? 'REFRESH CONNECTION' : observed.stale ? 'RECONNECTING' : 'COMPANION CONNECTED';
     if (blocked) {
       for (const button of $('tuner-controls').querySelectorAll('button')) button.disabled = true;
-      tunerSignature = ''; // Re-enable only from a fresh observation after explicit recovery.
+      tunerSignature = ''; // Re-enable only after fresh state and any required Refresh.
       for (const id of ['power-on', 'power-off', 'previous', 'toggle-play', 'next', 'volume-up', 'volume-down', 'mute']) $(id).disabled = true;
-      message('Coordinator changed or an action needs checking. After a phone disconnect, wait one minute, then choose Refresh.', true);
-    }
+      message(observed.needsRefresh ? companionRecoveryMessage : companionReconnectingMessage, observed.needsRefresh);
+    } else if ([companionRecoveryMessage, companionReconnectingMessage].includes($('message').textContent)) message('');
   });
   closeDialog();
   (menu ? $('menu') : $('source-list')).querySelector('button:not(:disabled)')?.focus();
@@ -674,6 +700,15 @@ $('manual-pairing').onclick = () => {
   manualPairing(true); $('dialog-input').focus(); void searchCompanions();
 };
 $('retry-qr').onclick = () => action(() => finishQRPairing($('retry-qr').dataset.url, qrInvitation, pairingAttempt));
+$('continue-menu').onclick = () => {
+  const input = $('continue-menu').dataset.input;
+  if (!input || !client?.companion) return;
+  return action(async () => {
+    const page = await client.list(0, input, true);
+    browsingInput = input; prepared = false; menuParents.length = 0;
+    renderMenu(page, 0);
+  });
+};
 $('takeover-menu').onclick = () => action(async () => {
   if (!browsingInput) throw new Error('Choose a music source first.');
   const page = await client.list(0, browsingInput, true);
@@ -1023,5 +1058,5 @@ await action(async () => {
 if ((initialHost || initialMode === 'companion' || pairingLoadError) && isDemo) {
   const error = $('message').textContent;
   openDialog('connect');
-  $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check Wi-Fi and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;
+  $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check the home network and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;
 }

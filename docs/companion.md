@@ -52,7 +52,10 @@ Only one iPhone and one TV per pairing are supported.
 | Neither open | Yamaha continues playback; no coordinator runs. |
 
 A phone authority lease lasts 12 seconds and is renewed by authenticated TV
-traffic. While a TV operation is pending, the TV sends observation-only
+traffic. Cached status observations time out after 3 seconds and get one retry
+on the same authenticated session. A single missed status reply does not retire
+the connection. Initial handoff reads retain their longer timeout. While a TV
+operation is pending, the TV sends observation-only
 heartbeats every 4 seconds, so a slow menu read does not expire the lease. TV
 operations wait up to 110 seconds for the phone's reply (a menu action can chain
 two 35-second menu reads). Every Yamaha mutation is checked again immediately
@@ -94,16 +97,33 @@ state. Navigation, focus and themes remain local. The TV retains its themes and
 remote control; the phone retains EN/UK, source browsing, FM/DAB and foreground
 physical-volume handling. Capabilities and limits come from Yamaha.
 
-One device operation runs at a time, with no command queue. Busy presses are
-dropped. Slow source menus leave cached Now Playing and local navigation usable.
+One device operation runs at a time, with no command queue. Busy command presses
+are dropped. Opening a menu waits for a background status read, then checks
+freshness and menu ownership before reading it. Slow source menus leave cached
+Now Playing and local navigation usable.
 Menu ownership lasts 45 seconds; **Take over menu** invalidates the other screen's
 selection. External Yamaha apps can still change the receiver; its API cannot
 make the final menu-check/selection pair atomic.
+
+While both apps browse the same source in shared mode, completed menu pages are
+shared with the other screen. Following a page does not grant its menu lease or
+send receiver commands. After the other app takes over, choose **Take over menu**
+to navigate here again. The TV offers this beside the menu as well as in Connection
+settings. Now Playing, Sources, themes and focus remain local.
+
+Volume and mute finish after Yamaha confirms the actual sound state. Track,
+tuner and Bluetooth metadata refresh with normal background reads, rather than
+blocking each sound adjustment. Ordinary activity keeps the connected badge
+steady; genuine connection failures and uncertain commands still show errors.
 
 Every write is sent once. An uncertain result blocks subsequent writes until
 explicit Refresh succeeds. Passive updates, resume and reconnect cannot clear
 uncertainty. Refresh reads actual state; it never restores a previous volume,
 input, menu or playback request. Closing either app sends no stop or power command.
+After a coordinator handoff, Refresh on either screen clears the shared recovery
+gate. A screen that lost its own command reply still requires its own Refresh.
+Temporary status-read failures reconnect automatically and clear their warning
+when fresh state returns, including when the cached revision has not changed.
 There is no audio streaming, Art Mode control, automatic TV launch, service login,
 CD transport or multiroom grouping.
 

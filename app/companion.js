@@ -84,7 +84,7 @@ export const companionInfo = snapshot => snapshot.track ? {
   playback: snapshot.track.playback, play_time: snapshot.track.elapsed, total_time: snapshot.track.duration, albumart_url: snapshot.track.artwork,
 } : snapshot.trackUnavailable ? { error: 'Playback information unavailable' } : {};
 export function companionMenu(page) {
-  return { input: page.input, menu_layer: page.layer, menu_name: page.title, index: page.index, max_line: page.total,
+  return { input: page.input, token: page.token, menu_layer: page.layer, menu_name: page.title, index: page.index, max_line: page.total,
     list_info: page.items.map(item => ({ text: item.text, attribute: (item.selectable ? 2 : 0) | (item.playable ? 4 : 0) | (item.searchable ? 8 : 0) })) };
 }
 export function companionMessage(error) {
@@ -93,7 +93,7 @@ export function companionMessage(error) {
   if (error.code === 'browseChanged') return 'The shared menu changed. Refresh and choose your item again.';
   if (error.code === 'browseUnavailable') return 'This Yamaha does not offer this menu.';
   if (['uncertain', 'uncertainError', 'reconcile', 'generation'].includes(error.code)) return 'The last action needs checking. Choose Refresh before sending another command.';
-  return 'Phone connection lost. Keep both apps on the same Wi-Fi. After a minute, choose Refresh to coordinate on this TV. An uncertain action is never replayed.';
+  return 'Phone connection lost. Keep both apps on the same home network. After a minute, choose Refresh to coordinate on this TV. An uncertain action is never replayed.';
 }
 
 // Semantic bridge for the existing TV presentation. No raw Yamaha requests leave this adapter.
@@ -112,7 +112,7 @@ export class FrameCompanion {
   async run(work) {
     if (this.pending) throw new Error('Yamaha is busy. Wait, then try again.');
     this.pending++;
-    try { return await work(); } catch (error) { throw new Error(companionMessage(error)); }
+    try { return await work(); } catch (error) { throw Object.assign(new Error(companionMessage(error)), { code: error.code }); }
     finally { this.pending--; }
   }
   async request(route, params = {}) {
@@ -139,16 +139,20 @@ export class FrameCompanion {
   async power(value) { return companionStatus(await this.command({ type: 'power', value })); }
   async selectInput(value) { return companionStatus(await this.command({ type: 'input', value })); }
   async list(index = 0, input = 'deezer', takeover = false) {
-    this.page = await this.run(() => this.controller.browse(input, index, takeover));
-    return companionMenu(this.page);
+    try {
+      this.page = await this.run(() => this.controller.browse(input, index, takeover));
+      return companionMenu(this.page);
+    } catch (error) { error.menuInput = input; throw error; }
   }
   async control(type, index) { return this.menuAction(type === 'return' ? { type: 'back' } : { type, index }); }
   async search(index, text) { return this.menuAction({ type: 'search', index, text }); }
   async menuAction(action) {
     if (!this.page) throw new Error('Refresh the shared menu first.');
-    const result = await this.run(() => this.controller.browseAction({ ...action, token: this.page.token }));
-    this.page = result.page;
-    return companionMenu(this.page);
+    try {
+      const result = await this.run(() => this.controller.browseAction({ ...action, token: this.page.token }));
+      this.page = result.page;
+      return companionMenu(this.page);
+    } catch (error) { error.menuInput = this.page.input; throw error; }
   }
   async reconcile() { return this.run(() => this.controller.reconcile()); }
   watch(listener) { return this.controller.watch(listener); }
@@ -186,8 +190,32 @@ export function companionTuner(snapshot) {
     description: [tuner.band.toUpperCase(), tuner.scanning ? 'Scanning…' : tuner.ready ? 'Tuned' : 'Waiting for signal', tuner.text].filter(Boolean).join(' · '), controls };
 }
 
+function networkProperty(property) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Network information unavailable.')), 1500);
+    const done = callback => value => { clearTimeout(timer); callback(value); };
+    try { globalThis.tizen.systeminfo.getPropertyValue(property, done(resolve), done(reject)); }
+    catch (error) { clearTimeout(timer); reject(error); }
+  });
+}
+export async function frameNetworkAddress() {
+  try {
+    const host = globalThis.webapis?.network?.getIp();
+    if (companionAPI.privateIPv4(host)) return host;
+  } catch { /* Samsung's optional library may be unavailable; use Tizen's active interface. */ }
+  if (globalThis.tizen?.systeminfo?.getPropertyValue) {
+    const network = await networkProperty('NETWORK');
+    const property = { WIFI: 'WIFI_NETWORK', ETHERNET: 'ETHERNET_NETWORK' }[network.networkType];
+    if (property) {
+      const adapter = await networkProperty(property);
+      const connected = network.networkType === 'ETHERNET' ? 'CONNECTED' : 'ON';
+      if (adapter.status === connected && companionAPI.privateIPv4(adapter.ipAddress)) return adapter.ipAddress;
+    }
+  }
+  throw new Error('Local discovery unavailable. Enter the phone address.');
+}
 export async function findFrameCompanions(signal, onDevice) {
-  const host = globalThis.webapis?.network?.getIp();
-  if (!companionAPI.privateIPv4(host)) throw new Error('Local discovery unavailable. Enter the phone address.');
+  const host = await frameNetworkAddress();
+  if (signal.aborted) return [];
   return companionAPI.discoverPeers(host, { signal, onDevice });
 }
