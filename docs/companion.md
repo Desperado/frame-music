@@ -107,6 +107,10 @@ Every write is sent once. An uncertain result blocks subsequent writes until
 explicit Refresh succeeds. Passive updates, resume and reconnect cannot clear
 uncertainty. Refresh reads actual state; it never restores a previous volume,
 input, menu or playback request. Closing either app sends no stop or power command.
+After a coordinator handoff, Refresh on either screen clears the shared recovery
+gate. A screen that lost its own command reply still requires its own Refresh.
+Temporary status-read failures reconnect automatically and clear their warning
+when fresh state returns, including when the cached revision has not changed.
 There is no audio streaming, Art Mode control, automatic TV launch, service login,
 CD transport or multiroom grouping.
 
