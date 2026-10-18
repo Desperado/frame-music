@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import api from '../packages/musiccast/dist/index.js';
 import { parseFeatures } from '../packages/musiccast/dist/parsers.js';
 import { deviceCapabilities, sources } from '../app/protocol.js';
-import { FrameCompanion, companionFeatures, companionTuner, pairFrame, frameInvitation, savedCompanion } from '../app/companion.js';
+import { FrameCompanion, companionFeatures, companionTuner, pairFrame, frameInvitation, savedCompanion, frameNetworkAddress, findFrameCompanions } from '../app/companion.js';
 
 const snapshot = () => ({ model: 'Fixture', features: { controls: ['power', 'volume', 'mute'], connectivity: [], sources: [{ id: 'deezer', name: 'Deezer', networkPlayer: true }, { id: 'tuner', name: 'Radio', networkPlayer: false, tuner: true }], volumeRange: { min: 0, max: 20, step: 1 } }, status: { power: 'on', input: 'deezer', volume: 10, mute: false }, track: { title: 'Fixture song', artist: '', album: '', playback: 'pause' }, trackUnavailable: false });
 
@@ -159,4 +159,58 @@ test('FM/DAB controls and presets come only from reported state and capabilities
   controls = companionTuner(state).controls;
   assert.ok(controls.some(c => c.command.type === 'tunerScan' && c.command.value === 'cancel'));
   assert.ok(!controls.some(c => c.command.type === 'tunerService'));
+});
+
+test('TV discovery falls back to the active Tizen interface when Samsung network access is unavailable', async t => {
+  const priorWebapis = globalThis.webapis, priorTizen = globalThis.tizen;
+  t.after(() => { globalThis.webapis = priorWebapis; globalThis.tizen = priorTizen; });
+  for (const networkType of ['WIFI', 'ETHERNET']) for (const failure of ['missing', 'throws', 'invalid']) {
+    const properties = [];
+    globalThis.webapis = failure === 'missing' ? undefined : { network: { getIp() {
+      if (failure === 'throws') throw Object.assign(new Error('Unavailable'), { name: 'SecurityError' });
+      return '0.0.0.0';
+    } } };
+    globalThis.tizen = { systeminfo: { getPropertyValue(property, success) {
+      properties.push(property);
+      success(property === 'NETWORK' ? { networkType } : { status: networkType === 'ETHERNET' ? 'CONNECTED' : 'ON', ipAddress: '192.168.1.30' });
+    } } };
+    assert.equal(await frameNetworkAddress(), '192.168.1.30');
+    assert.deepEqual(properties, ['NETWORK', `${networkType}_NETWORK`]);
+    const abort = new AbortController(); abort.abort();
+    assert.deepEqual(await findFrameCompanions(abort.signal, () => assert.fail('Cancelled search')), []);
+  }
+});
+
+test('TV network discovery rejects disconnected, public and unsupported interfaces without guessing a subnet', async t => {
+  const priorWebapis = globalThis.webapis, priorTizen = globalThis.tizen;
+  t.after(() => { globalThis.webapis = priorWebapis; globalThis.tizen = priorTizen; });
+  globalThis.webapis = { network: { getIp: () => '192.168.1.30' } };
+  globalThis.tizen = { systeminfo: { getPropertyValue() { assert.fail('Samsung address is already valid'); } } };
+  assert.equal(await frameNetworkAddress(), '192.168.1.30');
+  globalThis.webapis = undefined;
+  for (const adapter of [{ status: 'OFF', ipAddress: '192.168.1.30' }, { status: 'ON', ipAddress: '8.8.8.8' }]) {
+    globalThis.tizen = { systeminfo: { getPropertyValue(property, success) {
+      success(property === 'NETWORK' ? { networkType: 'WIFI' } : adapter);
+    } } };
+    await assert.rejects(frameNetworkAddress());
+  }
+  globalThis.tizen = { systeminfo: { getPropertyValue(_property, _success, error) { error(new Error('Unsupported')); } } };
+  await assert.rejects(frameNetworkAddress());
+  globalThis.tizen = { systeminfo: { getPropertyValue(_property, success) { success({ networkType: 'NONE' }); } } };
+  await assert.rejects(frameNetworkAddress());
+  globalThis.tizen = { systeminfo: { getPropertyValue(property, success) {
+    success(property === 'NETWORK' ? { networkType: 'ETHERNET' } : { status: 'DISCONNECTED', ipAddress: '192.168.1.30' });
+  } } };
+  await assert.rejects(frameNetworkAddress());
+});
+
+test('TV network lookup times out if the Tizen callback never arrives', async t => {
+  const priorWebapis = globalThis.webapis, priorTizen = globalThis.tizen;
+  t.after(() => { globalThis.webapis = priorWebapis; globalThis.tizen = priorTizen; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  globalThis.webapis = undefined;
+  globalThis.tizen = { systeminfo: { getPropertyValue() {} } };
+  const failed = assert.rejects(frameNetworkAddress(), /Network information unavailable/);
+  t.mock.timers.tick(1500);
+  await failed;
 });

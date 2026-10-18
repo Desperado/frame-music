@@ -93,7 +93,7 @@ export function companionMessage(error) {
   if (error.code === 'browseChanged') return 'The shared menu changed. Refresh and choose your item again.';
   if (error.code === 'browseUnavailable') return 'This Yamaha does not offer this menu.';
   if (['uncertain', 'uncertainError', 'reconcile', 'generation'].includes(error.code)) return 'The last action needs checking. Choose Refresh before sending another command.';
-  return 'Phone connection lost. Keep both apps on the same Wi-Fi. After a minute, choose Refresh to coordinate on this TV. An uncertain action is never replayed.';
+  return 'Phone connection lost. Keep both apps on the same home network. After a minute, choose Refresh to coordinate on this TV. An uncertain action is never replayed.';
 }
 
 // Semantic bridge for the existing TV presentation. No raw Yamaha requests leave this adapter.
@@ -186,8 +186,32 @@ export function companionTuner(snapshot) {
     description: [tuner.band.toUpperCase(), tuner.scanning ? 'Scanning…' : tuner.ready ? 'Tuned' : 'Waiting for signal', tuner.text].filter(Boolean).join(' · '), controls };
 }
 
+function networkProperty(property) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Network information unavailable.')), 1500);
+    const done = callback => value => { clearTimeout(timer); callback(value); };
+    try { globalThis.tizen.systeminfo.getPropertyValue(property, done(resolve), done(reject)); }
+    catch (error) { clearTimeout(timer); reject(error); }
+  });
+}
+export async function frameNetworkAddress() {
+  try {
+    const host = globalThis.webapis?.network?.getIp();
+    if (companionAPI.privateIPv4(host)) return host;
+  } catch { /* Samsung's optional library may be unavailable; use Tizen's active interface. */ }
+  if (globalThis.tizen?.systeminfo?.getPropertyValue) {
+    const network = await networkProperty('NETWORK');
+    const property = { WIFI: 'WIFI_NETWORK', ETHERNET: 'ETHERNET_NETWORK' }[network.networkType];
+    if (property) {
+      const adapter = await networkProperty(property);
+      const connected = network.networkType === 'ETHERNET' ? 'CONNECTED' : 'ON';
+      if (adapter.status === connected && companionAPI.privateIPv4(adapter.ipAddress)) return adapter.ipAddress;
+    }
+  }
+  throw new Error('Local discovery unavailable. Enter the phone address.');
+}
 export async function findFrameCompanions(signal, onDevice) {
-  const host = globalThis.webapis?.network?.getIp();
-  if (!companionAPI.privateIPv4(host)) throw new Error('Local discovery unavailable. Enter the phone address.');
+  const host = await frameNetworkAddress();
+  if (signal.aborted) return [];
   return companionAPI.discoverPeers(host, { signal, onDevice });
 }

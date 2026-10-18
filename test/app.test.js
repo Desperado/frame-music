@@ -1293,7 +1293,7 @@ test('shared setup automatically discovers the coordinator without pairing, devi
   app.nodes.get('manual-pairing').click();
   const focused = app.document.activeElement;
   for (let i = 0; i < 3; i++) await app.settle();
-  assert.equal(requests.length, 265);
+  assert.equal(requests.length, 253, 'the cancelled QR lookup must not start probes before the manual search');
   assert.ok(requests.every(({ options }) => options.method === 'GET' && !options.body && !options.headers));
   assert.equal(app.nodes.get('companion-results').children.length, 1);
   assert.equal(app.nodes.get('dialog-input').value, 'http://192.168.1.10:8095');
@@ -1306,6 +1306,7 @@ test('leaving shared setup cancels all discovery probes and ignores late results
   const app = await launch(undefined, { webapis: { network: { getIp: () => '192.168.1.30' } },
     discoveryFetch: (_url, options) => new Promise(resolve => probes.push({ options, resolve })) });
   app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
+  await app.settle();
   assert.equal(probes.length, 12);
   app.nodes.get('close-dialog').click();
   assert.ok(probes.every(({ options }) => options.signal.aborted));
@@ -1322,7 +1323,9 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
   const coordinator = new shared.CompanionCoordinator({ read: async () => state }, 'fixture');
   const phone = new shared.PhonePeerService('192.168.1.20', 'http://192.168.1.10:8095', coordinator, n => new Uint8Array(randomBytes(n)), undefined, async record => { phoneRecord = record; phoneSaves++; });
   const missing = () => Object.assign(new Error('Missing'), { name: 'NotFoundError' });
-  const tizen = { keymanager: {
+  const tizen = { systeminfo: { getPropertyValue(property, success) {
+    success(property === 'NETWORK' ? { networkType: 'ETHERNET' } : { status: 'CONNECTED', ipAddress: '192.168.1.30' });
+  } }, keymanager: {
     getData({ name }) { if (!records.has(name)) throw missing(); return records.get(name); },
     removeData({ name }) { if (!records.delete(name)) throw missing(); },
     saveData(name, raw, _password, success) { records.set(name, raw); success(); },
@@ -1331,7 +1334,7 @@ for (const unavailable of [false, true]) test(`QR setup ${unavailable ? 'blocks 
     const value = String(url).includes('192.168.1.10:') ? await phone.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined) : {};
     return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(value) };
   };
-  const app = await launch(tizen, { storage, storageUnavailable: unavailable, webapis: { network: { getIp: () => '192.168.1.30' } }, companionFetch,
+  const app = await launch(tizen, { storage, storageUnavailable: unavailable, companionFetch,
     onInvitation: code => phone.acceptInvitation(code.text) });
   app.nodes.get('settings').click(); app.nodes.get('pair-companion').click();
   for (let i = 0; i < 8; i++) await app.settle();

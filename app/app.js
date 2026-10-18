@@ -530,7 +530,7 @@ async function searchCompanions() {
     });
     if (!controller.signal.aborted) {
       if (devices.length === 1 && $('dialog-input').value === 'http://') $('dialog-input').value = devices[0].url;
-      $('companion-discovery-status').textContent = devices.length ? 'Choose your phone, then compare the code on both screens.' : 'No phone found. Open Connect phone + TV on your iPhone, check Wi-Fi, or enter its address.';
+      $('companion-discovery-status').textContent = devices.length ? 'Choose your phone, then compare the code on both screens.' : 'No phone found. Open Connect phone + TV on your iPhone, check the home network, or enter its address.';
     }
   } catch {
     if (!controller.signal.aborted) $('companion-discovery-status').textContent = 'Local discovery unavailable. Enter the phone address, or check network permissions and search again.';
@@ -1030,5 +1030,5 @@ await action(async () => {
 if ((initialHost || initialMode === 'companion' || pairingLoadError) && isDemo) {
   const error = $('message').textContent;
   openDialog('connect');
-  $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check Wi-Fi and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;
+  $('dialog-error').textContent = initialMode === 'companion' ? 'Phone + TV connection unavailable. Check the home network and pairing. Standalone mode requires an explicit connection.' : `Could not reconnect to Yamaha. ${error}`;
 }
