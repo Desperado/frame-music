@@ -18,6 +18,11 @@ Run `npm ci` then `npm run check`. Coverage includes:
   authenticated encryption, direction/session/counter checks and replay rejection.
 - Phone authority expiry, fencing immediately before device writes, slow-menu
   heartbeats, lost handoff/action replies, delayed TV takeover and explicit Refresh.
+- A lost cached status reply preserves the shared session; a stalled observation
+  recovers within the authority lease. Lost command replies still never replay.
+- Acknowledged volume changes retry failed confirmation reads within the existing
+  four-read limit; complete confirmation failure still requires Refresh.
+- Shared Refresh clears the TV recovery warning without hiding other errors.
 - Shared menu ownership, stale selection rejection, busy dropping and no replay.
 - Capability-driven Bluetooth/FM/DAB protocol and TV radio controls.
 - The actual TV bundle, semantic adapter, setup discovery/cancellation, preserved
