@@ -238,6 +238,8 @@ function preloadTrack(info, status) {
   $('browse-artist').setAttribute('aria-label', `Browse ${hasTrack ? info.artist || 'artist' : 'artist'} on Deezer`);
   $('open-playlist').disabled = status.power === 'standby' || !sources(features).some(source => source.id === status.input && source.type === 'netusb');
   $('detail-album').textContent = hasTrack ? info.album || 'Album not provided' : '—';
+  $('browse-album').disabled = $('browse-artist').disabled || !info.album?.trim() || info.album.length > 128;
+  $('browse-album').setAttribute('aria-label', `Browse ${hasTrack ? info.album || 'album' : 'album'} on Deezer`);
   $('detail-time').textContent = hasTrack ? `${$('play-state').textContent} · ${clockTime(info.play_time)} / ${info.total_time > 0 ? clockTime(info.total_time) : '—'}` : $('play-state').textContent;
   const key = hasTrack ? JSON.stringify([isDemo ? 'demo' : client.host, status.input, trackKey(info)]) : '';
   const queueContext = JSON.stringify([isDemo ? 'demo' : client.host, status.power, status.input, key]);
@@ -417,10 +419,10 @@ async function currentMenu() {
 
 // Search Yamaha's Deezer catalogue, using the same shared-menu guards as a
 // remote selection. Never infer a playable item or start music on an artist click.
-async function browsePlayingArtist(artist) {
+async function browsePlayingArtist(artist, album) {
   const epoch = viewEpoch, candidate = client;
   const active = () => {
-    if (epoch !== viewEpoch || candidate !== client) throw new Error('Artist browsing cancelled.');
+    if (epoch !== viewEpoch || candidate !== client) throw new Error('Deezer browsing cancelled.');
   };
   const label = value => String(value || '').trim().normalize('NFKC').toLocaleLowerCase();
   const show = async (index = 0) => {
@@ -441,6 +443,7 @@ async function browsePlayingArtist(artist) {
   };
   const select = async item => { active(); await activate(item, 'select', active); active(); };
   if (!artist?.trim() || artist.length > 128) throw new Error('Artist information unavailable.');
+  if (album !== undefined && (!album.trim() || album.length > 128)) throw new Error('Album information unavailable.');
   if (!sources(features).some(source => source.id === 'deezer' && source.browse)) throw new Error('Deezer browsing is unavailable on this Yamaha.');
   // Preparation can reset Yamaha's menu, so do it before discovering the route.
   if (!client.companion && features.zone?.find(zone => zone.id === 'main')?.func_list?.includes('prepare_input_change')) {
@@ -466,6 +469,25 @@ async function browsePlayingArtist(artist) {
   const match = await find(item => item.browse && label(item.text) === label(artist));
   if (match) await select(match);
   else throw new Error(`Choose the matching artist from Deezer’s results for “${artist}”.`);
+  if (album === undefined) return;
+  // Stay within this artist: different artists can have identically named albums.
+  const releases = { layer: list.menu_layer, name: list.menu_name };
+  const albumMatch = item => item.browse && label(item.text) === label(album);
+  let release = await find(albumMatch);
+  if (release) { await select(release); return; }
+  const visited = new Set();
+  for (let categoryCount = 0; categoryCount < 8; categoryCount++) {
+    const category = await find(item => item.browse && /album|single|\bep\b|\beps\b|compilation|other|release/i.test(item.text) && !visited.has(label(item.text)));
+    if (!category) break;
+    visited.add(label(category.text));
+    await select(category);
+    release = await find(albumMatch);
+    if (release) { await select(release); return; }
+    await currentMenu(); active(); await client.control('return'); active();
+    menuParents.pop(); await show();
+    if (list.menu_layer !== releases.layer || list.menu_name !== releases.name) throw new Error('The Yamaha menu changed. Choose your item again.');
+  }
+  throw new Error(`“${album}” was not found in this artist’s releases. Browse the available albums and singles here.`);
 }
 
 function renderPlaylist() {
@@ -912,6 +934,7 @@ for (const id of ['now-playing', 'open-track']) $(id).onclick = () => {
   if (!busy && !client.companion) void action(() => refreshPlayer());
 };
 $('browse-artist').onclick = () => { const artist = sceneTrack.artist; void action(() => browsePlayingArtist(artist)); };
+$('browse-album').onclick = () => { const { artist, album } = sceneTrack; void action(() => browsePlayingArtist(artist, album)); };
 $('open-playlist').onclick = () => {
   if (busy) return;
   $('playlist-panel').hidden = false; $('open-playlist').setAttribute('aria-expanded', 'true');

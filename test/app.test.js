@@ -1565,10 +1565,55 @@ test('artist click finds Deezer search from an unrelated cold-start menu and ope
   assert.equal(app.calls.some(c => /setPlayback|setInput|setPower/.test(c.route) || c.params?.type === 'play'), false);
 });
 
+for (const location of ['Albums', 'Singles & EPs', 'missing']) {
+  test(`album click searches this artist's paginated releases: ${location}`, async () => {
+    const artist = 'Скрябін', album = 'Казки', parents = [];
+    const releases = [{text: 'Albums', attribute: 2}, {text: 'Singles & EPs', attribute: 2}];
+    const app = await launch(undefined, {remote: {items: [{text: 'Search', attribute: 10}], info: {artist, album, track: 'Я живу'},
+      search(params, remote) { assert.equal(params.string, artist); parents.push({layer: remote.layer, menu: remote.menu, items: remote.items}); Object.assign(remote, {layer: 1, menu: 'Artists', items: [{text: artist, attribute: 2}]}); },
+      control(params, remote) {
+        if (params.type === 'return') { Object.assign(remote, parents.pop()); return; }
+        assert.equal(params.type, 'select');
+        const selected = remote.items[params.index].text;
+        parents.push({layer: remote.layer, menu: remote.menu, items: remote.items});
+        const items = selected === artist ? releases : selected === album ? [{text: 'Я живу', attribute: 4}] : Array.from({length: 10}, (_, i) => ({text: i === 9 && selected === location ? album : `Other release ${i}`, attribute: 2}));
+        Object.assign(remote, {layer: remote.layer + 1, menu: selected, items});
+      }
+    }});
+    await app.connect(); app.nodes.get('now-playing').click(); await app.settle(); app.calls.length = 0;
+    assert.equal(app.nodes.get('browse-album').disabled, false);
+    app.nodes.get('browse-album').click(); for (let i = 0; i < 30; i++) await app.settle();
+    if (location === 'missing') {
+      assert.equal(app.nodes.get('menu-title').textContent, artist);
+      assert.match(app.nodes.get('message').textContent, /not found/);
+    } else {
+      assert.equal(app.nodes.get('menu-title').textContent, album);
+      assert.match(app.nodes.get('menu').textContent, /Я живу/);
+      assert.equal(app.calls.some(c => c.route === 'netusb/getListInfo' && c.params.index === 8), true);
+      app.nodes.get('back').click(); await app.settle();
+      assert.equal(app.nodes.get('menu-title').textContent, location);
+    }
+    assert.equal(app.calls.some(c => /setPlayback|setInput|setPower/.test(c.route) || c.params?.type === 'play'), false);
+  });
+}
+
+test('album browsing is disabled for missing album or artist metadata and standby', async () => {
+  const app = await launch(undefined, {remote: {info: {artist: 'Artist', album: 'Album', track: 'Song'}}});
+  await app.connect();
+  assert.equal(app.nodes.get('browse-album').disabled, false);
+  for (const info of [{artist: 'Artist', track: 'Song'}, {album: 'Album', track: 'Song'}, {artist: 'Artist', album: 'a'.repeat(129), track: 'Song'}]) {
+    app.remote.info = info; await app.poll(); assert.equal(app.nodes.get('browse-album').disabled, true);
+  }
+  app.remote.info = {artist: 'Artist', album: 'Album', track: 'Song'}; app.remote.power = 'standby'; await app.poll();
+  assert.equal(app.nodes.get('browse-album').disabled, true);
+});
+
 test('clock and calendar follow local time and update immediately after resume', async () => {
   const app = await launch();
   const date = app.nodes.get('room-date'), clock = app.nodes.get('room-time');
   assert.ok(clock.textContent.length > 3); assert.ok(date.textContent.length > 8);
+  assert.ok(app.nodes.get('player').contains(clock));
+  assert.equal(app.nodes.get('appearance').contains(clock), false);
   const before = clock.attributes.datetime;
   app.document.visibilityState = 'hidden'; app.advance(86400000); await app.poll();
   assert.equal(clock.attributes.datetime, before);
