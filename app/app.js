@@ -5,6 +5,16 @@ import { LyricsLoader, artworkUrl, trackKey } from './metadata.js';
 import { artistScene, sceneMatchesTrack, isArtistFolder } from './artist-scene.js';
 
 const $ = id => document.getElementById(id);
+function updateRoomClock() {
+  const now = new Date(Date.now());
+  $('room-time').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('room-time').setAttribute('datetime', now.toISOString());
+  $('room-weekday').textContent = now.toLocaleDateString([], { weekday: 'long' });
+  $('room-date').textContent = now.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+  $('room-date').setAttribute('datetime', `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`);
+}
+updateRoomClock();
+setInterval(() => { if (document.visibilityState === 'visible') updateRoomClock(); }, 1000);
 const themes = {
   'gallery-night': 'Gallery Night', 'record-store-after-hours': 'Record Store After Hours',
   'midnight-precision': 'Midnight Precision',
@@ -50,6 +60,7 @@ let client, connectingClient, list, features, isDemo = true, busy = false, prepa
 let trackView = false, metadataKey = '', metadataVersion = 0, artKey = '', artRevision = 0;
 let trackOrigin = 'menu';
 let sceneTrack = {}, sceneArtwork = '', sceneVersion = 0, browseScene = null;
+let playlist, playlistPage = 0, playlistKey = '', playlistContext = '';
 const viewMemory = new Map(), menuParents = [];
 const zoneMemory = new Map();
 let playerOrigin = 'content', lastArrow = 0, lastArrowTime = 0, heldArrow, pressedArrow;
@@ -223,9 +234,21 @@ function preloadTrack(info, status) {
   if (!browseScene) browseScene = artistScene(artistPath(list), sceneTrack);
   $('detail-title').textContent = $('track-title').textContent;
   $('detail-artist').textContent = hasTrack ? info.artist || 'Artist not provided' : '—';
+  $('browse-artist').disabled = !hasTrack || !info.artist?.trim() || info.artist.length > 128 || !sources(features).some(source => source.id === 'deezer' && source.browse);
+  $('browse-artist').setAttribute('aria-label', `Browse ${hasTrack ? info.artist || 'artist' : 'artist'} on Deezer`);
+  $('open-playlist').disabled = status.power === 'standby' || !sources(features).some(source => source.id === status.input && source.type === 'netusb');
   $('detail-album').textContent = hasTrack ? info.album || 'Album not provided' : '—';
   $('detail-time').textContent = hasTrack ? `${$('play-state').textContent} · ${clockTime(info.play_time)} / ${info.total_time > 0 ? clockTime(info.total_time) : '—'}` : $('play-state').textContent;
   const key = hasTrack ? JSON.stringify([isDemo ? 'demo' : client.host, status.input, trackKey(info)]) : '';
+  const queueContext = JSON.stringify([isDemo ? 'demo' : client.host, status.power, status.input, key]);
+  if (queueContext !== playlistContext) {
+    playlistContext = queueContext;
+    if (!$('playlist-panel').hidden) {
+      playlist = undefined; $('playlist-tracks').textContent = '';
+      $('playlist-status').textContent = 'Playback changed. Refresh the playlist to see the current queue.';
+      $('playlist-prev').disabled = true; $('playlist-next').disabled = true;
+    }
+  }
   if (key !== metadataKey) {
     metadataKey = key; ++metadataVersion;
     lyricsLoader.cancel(); $('lyrics').scrollTop = 0;
@@ -367,10 +390,11 @@ async function ensurePrepared(item) {
   return match;
 }
 
-async function activate(item, type) {
+async function activate(item, type, beforeControl = () => {}) {
   if (type === 'select') renderArtistScene([...menuParents.map(parent => parent.name), list.menu_name, item.text]);
   try {
     item = await ensurePrepared(item);
+    beforeControl();
     rememberView();
     const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0), selected: { index: item.index, text: item.text, attribute: item.attribute }, count: Number(list.max_line || 0) };
     await client.control(type, item.index);
@@ -389,6 +413,117 @@ async function currentMenu() {
     throw new Error('The Yamaha menu changed. Choose your item again.');
   }
   return fresh;
+}
+
+// Search Yamaha's Deezer catalogue, using the same shared-menu guards as a
+// remote selection. Never infer a playable item or start music on an artist click.
+async function browsePlayingArtist(artist) {
+  const epoch = viewEpoch, candidate = client;
+  const active = () => {
+    if (epoch !== viewEpoch || candidate !== client) throw new Error('Artist browsing cancelled.');
+  };
+  const label = value => String(value || '').trim().normalize('NFKC').toLocaleLowerCase();
+  const show = async (index = 0) => {
+    active(); const data = await client.list(index, 'deezer'); active(); renderMenu(data, 0); return data;
+  };
+  const find = async predicate => {
+    const first = list;
+    for (let page = 0; page < 32; page++) {
+      active();
+      if (list.menu_layer !== first.menu_layer || list.menu_name !== first.menu_name) throw new Error('The Yamaha menu changed. Choose your item again.');
+      const match = entries(list).find(predicate);
+      if (match) return match;
+      const next = Number(list.index || 0) + 8;
+      if (next >= Number(list.max_line || 0)) break;
+      await show(next);
+    }
+    await show(0);
+  };
+  const select = async item => { active(); await activate(item, 'select', active); active(); };
+  if (!artist?.trim() || artist.length > 128) throw new Error('Artist information unavailable.');
+  if (!sources(features).some(source => source.id === 'deezer' && source.browse)) throw new Error('Deezer browsing is unavailable on this Yamaha.');
+  // Preparation can reset Yamaha's menu, so do it before discovering the route.
+  if (!client.companion && features.zone?.find(zone => zone.id === 'main')?.func_list?.includes('prepare_input_change')) {
+    await client.request('main/prepareInputChange', { input: 'deezer' }); active();
+  }
+  browsingInput = 'deezer'; prepared = true; menuParents.length = 0;
+  await show();
+  for (let depth = 0; Number(list.menu_layer) > 0 && depth < 32; depth++) {
+    await currentMenu(); active(); await client.control('return'); await show();
+  }
+  if (Number(list.menu_layer) !== 0) throw new Error('Could not open Deezer’s home menu. Try Refresh.');
+  let search = await find(item => item.search || (item.browse && label(item.text) === 'search'));
+  for (let depth = 0; search && !search.search && depth < 3; depth++) {
+    await select(search);
+    search = await find(item => item.search && /artist/i.test(item.text)) || await find(item => item.search || (item.browse && /^artists?$/i.test(item.text.trim())));
+  }
+  if (!search?.search) throw new Error('This Deezer menu has no artist search. Browse the available categories here.');
+  await ensurePrepared(search); active();
+  const parent = { layer: list.menu_layer, name: list.menu_name, index: Number(list.index || 0), selected: search, count: Number(list.max_line || 0) };
+  await client.search(search.index, artist); active(); menuParents.push(parent); await show();
+  const category = !isArtistFolder(list.menu_name) && await find(item => item.browse && /^artists?$/i.test(item.text.trim()));
+  if (category) await select(category);
+  const match = await find(item => item.browse && label(item.text) === label(artist));
+  if (match) await select(match);
+  else throw new Error(`Choose the matching artist from Deezer’s results for “${artist}”.`);
+}
+
+function renderPlaylist() {
+  const container = $('playlist-tracks'); container.textContent = '';
+  const tracks = playlist.tracks.filter(track => track.index >= playlistPage && track.index < playlistPage + 8);
+  for (const track of tracks) {
+    const row = document.createElement('li');
+    const number = document.createElement('span'); number.className = 'playlist-number'; number.textContent = String(track.index + 1);
+    const detail = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = track.title;
+    const subtitle = document.createElement('span'); subtitle.textContent = [track.artist, track.album].filter(Boolean).join(' · ');
+    detail.append(title, subtitle); row.append(number, detail);
+    if (track.index === playlist.playingIndex) {
+      row.setAttribute('aria-current', 'true');
+      const playing = document.createElement('span'); playing.className = 'playlist-playing'; playing.textContent = 'Now playing'; row.append(playing);
+    }
+    container.append(row);
+  }
+  $('playlist-status').textContent = playlist.total ? `${playlistPage + 1}–${playlistPage + tracks.length} of ${playlist.total} tracks · From Yamaha` : 'The Yamaha’s current playlist is empty.';
+  $('playlist-prev').disabled = playlistPage === 0;
+  $('playlist-next').disabled = !tracks.length || playlistPage + tracks.length >= playlist.total;
+}
+
+async function loadPlaylist(index = 0, openAtPlaying = false) {
+  const candidate = client, epoch = viewEpoch;
+  const current = () => client === candidate && viewEpoch === epoch && trackView && !$('playlist-panel').hidden;
+  $('playlist-status').textContent = 'Reading the current playlist from Yamaha…';
+  $('playlist-tracks').textContent = ''; playlist = undefined;
+  $('playlist-prev').disabled = true; $('playlist-next').disabled = true;
+  try {
+    const state = await playerState(candidate);
+    if (!current()) return;
+    renderPlayer(state.info, state.status); renderSound(state.status);
+    if (state.status.power === 'standby' || !sources(features).some(source => source.id === state.status.input && source.type === 'netusb')) throw new Error('This input does not provide a Yamaha playlist.');
+    const key = playlistContext;
+    let data = await candidate.playQueue(index);
+    if (!current() || key !== playlistContext) return;
+    playlistPage = openAtPlaying && data.playingIndex !== null ? Math.floor(data.playingIndex / 8) * 8 : index;
+    if (playlistPage >= data.total) playlistPage = 0;
+    if (data.total && !data.tracks.some(track => track.index === playlistPage)) data = await candidate.playQueue(playlistPage);
+    if (!current() || key !== playlistContext) return;
+    // Another controller can replace the queue between the two reads.
+    if (playlistPage && playlistPage >= data.total) {
+      playlistPage = 0; data = await candidate.playQueue(0);
+      if (!current() || key !== playlistContext) return;
+    }
+    playlist = data; playlistKey = key; renderPlaylist();
+    $('playlist-refresh').focus();
+  } catch {
+    if (current()) $('playlist-status').textContent = 'The current playlist is unavailable from Yamaha. Try Refresh playlist. Some inputs or receiver firmware do not expose a queue.';
+  }
+}
+
+function pagePlaylist(direction) {
+  const index = playlistPage + direction * 8;
+  if (!playlist || playlistKey !== playlistContext || index < 0 || index >= playlist.total) return;
+  if (playlist.tracks.some(track => track.index === index)) { playlistPage = index; renderPlaylist(); }
+  else return loadPlaylist(index);
 }
 
 async function pageMenu(direction) {
@@ -776,6 +911,18 @@ for (const id of ['now-playing', 'open-track']) $(id).onclick = () => {
   ++viewEpoch; renderTrack();
   if (!busy && !client.companion) void action(() => refreshPlayer());
 };
+$('browse-artist').onclick = () => { const artist = sceneTrack.artist; void action(() => browsePlayingArtist(artist)); };
+$('open-playlist').onclick = () => {
+  if (busy) return;
+  $('playlist-panel').hidden = false; $('open-playlist').setAttribute('aria-expanded', 'true');
+  void action(() => loadPlaylist(0, true));
+};
+$('playlist-refresh').onclick = () => action(() => loadPlaylist(0, true));
+$('playlist-close').onclick = () => {
+  $('playlist-panel').hidden = true; $('open-playlist').setAttribute('aria-expanded', 'false'); $('open-playlist').focus();
+};
+$('playlist-prev').onclick = () => action(() => pagePlaylist(-1));
+$('playlist-next').onclick = () => action(() => pagePlaylist(1));
 $('lyrics-up').onclick = () => { $('lyrics').scrollTop -= $('lyrics').clientHeight * .8; };
 $('lyrics-down').onclick = () => { $('lyrics').scrollTop += $('lyrics').clientHeight * .8; };
 $('sources').onclick = () => { ++viewEpoch; renderSources(true); };
@@ -1005,6 +1152,7 @@ document.addEventListener('keydown', event => {
 
 document.addEventListener('keyup', event => { if (pressedArrow === event.keyCode) { clearHeldArrow(); pressedArrow = undefined; } });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') updateRoomClock();
   if (document.visibilityState !== 'visible') {
     stopCompanionSearch();
     if (qrInvitation) {

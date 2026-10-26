@@ -1,12 +1,14 @@
 import { BrowseError, validBrowseAction, validBrowseIndex } from './browsing';
 import { CommandRejectedError } from './command-error';
-import type { BrowseAction, BrowsePage, BrowseResult, Command, Controller, Snapshot } from './types';
+import { validQueueIndex } from './play-queue';
+import type { BrowseAction, BrowsePage, BrowseResult, Command, Controller, PlayQueue, Snapshot } from './types';
 
 export const companionVersion = 1;
 export type CompanionOperation =
   | { type: 'observe' }
   | { type: 'reconcile' }
   | { type: 'release' }
+  | { type: 'queue'; index: number }
   | { type: 'command'; command: Command }
   | { type: 'browse'; input: string; index: number; takeover?: boolean }
   | { type: 'browseAction'; action: BrowseAction; lease: string };
@@ -35,6 +37,7 @@ export interface CompanionReply {
   code?: CompanionCode;
   page?: BrowsePage;
   lease?: string;
+  queue?: PlayQueue;
 }
 
 export function validCommand(value: unknown): value is Command {
@@ -57,6 +60,7 @@ export function validCompanionRequest(value: unknown): value is CompanionRequest
   switch (op.type) {
     case 'observe': case 'reconcile': case 'release': return Object.keys(op).length === 1;
     case 'command': return validCommand(op.command) && Object.keys(op).length === 2;
+    case 'queue': return validQueueIndex(op.index) && Object.keys(op).length === 2;
     case 'browse': return ['deezer', 'server', 'usb', 'net_radio'].includes(op.input) && validBrowseIndex(op.index) && (op.takeover === undefined || typeof op.takeover === 'boolean');
     case 'browseAction': return validBrowseAction(op.action) && typeof op.lease === 'string' && op.lease.length <= 80;
     default: return false;
@@ -131,7 +135,7 @@ export class CompanionCoordinator {
   private async perform(client: string, { sequence, operation: op }: CompanionRequest): Promise<CompanionReply> {
     // Refresh and opening a menu only read Yamaha state, so they may wait for
     // a background read. Writes still reject concurrent work and never queue.
-    if ((op.type === 'reconcile' || op.type === 'browse') && this.polling) await this.polling;
+    if ((op.type === 'reconcile' || op.type === 'browse' || op.type === 'queue') && this.polling) await this.polling;
     if (this.operating) return this.reply(sequence, 'rejected', 'busy');
     if (this.lease && this.now() >= this.lease.expires) this.release();
     if (op.type === 'release') {
@@ -145,12 +149,16 @@ export class CompanionCoordinator {
     this.operating = true;
     this.publish({ activity: op.type === 'command' ? 'command' : op.type.startsWith('browse') ? 'menu' : 'read' });
     let page: BrowsePage | undefined;
+    let queue: PlayQueue | undefined;
     let outcome: CompanionReply['outcome'] = 'observed', code: CompanionCode | undefined;
     try {
       if (op.type === 'observe' || op.type === 'reconcile') {
         const snapshot = await this.controller.read();
         if (op.type === 'reconcile') this.release();
         this.publish({ snapshot, freshness: 'fresh', ...(op.type === 'reconcile' ? { needsReconcile: false } : {}) });
+      } else if (op.type === 'queue') {
+        if (!this.controller.playQueue) throw new BrowseError('browseUnavailable');
+        queue = await this.controller.playQueue(op.index);
       } else if (op.type === 'command') {
         const snapshot = await this.controller.execute(op.command);
         if (op.command.type === 'input' || op.command.type === 'power') this.release();
@@ -178,13 +186,13 @@ export class CompanionCoordinator {
       } else {
         outcome = 'rejected'; code = error instanceof CommandRejectedError ? 'invalid' : browseCode === 'browseChanged' || browseCode === 'browseUnavailable' || browseCode === 'browseReadError' ? browseCode : 'offline';
         if (op.type.startsWith('browse')) this.release();
-        else this.publish({ freshness: 'stale' });
+        else if (op.type !== 'queue') this.publish({ freshness: 'stale' });
       }
     } finally {
       if (invalidation !== this.invalidation) { this.release(); this.publish({ freshness: 'stale', needsReconcile: true }); }
       this.operating = false; this.publish({ activity: undefined });
     }
-    return { ...this.reply(sequence, outcome, code), ...(page ? { page, lease: this.lease?.token } : {}) };
+    return { ...this.reply(sequence, outcome, code), ...(page ? { page, lease: this.lease?.token } : {}), ...(queue ? { queue } : {}) };
   }
 }
 
@@ -266,6 +274,7 @@ export class CompanionController implements Controller {
     } finally { this.operating = false; this.emit(); }
   }
   async read() { const state = await this.observe(); if (!state.snapshot || state.freshness !== 'fresh') throw new CompanionError('offline'); return state.snapshot; }
+  async playQueue(index = 0) { const r = await this.operation({ type: 'queue', index }); if (!r.queue) throw new CompanionError('browseUnavailable'); return r.queue; }
   async reconcile() { const r = await this.operation({ type: 'reconcile' }); if (!r.state.snapshot) throw new CompanionError('offline'); return r.state.snapshot; }
   async execute(command: Command) { const r = await this.operation({ type: 'command', command }); if (!r.state.snapshot) throw new CompanionError('offline'); return r.state.snapshot; }
   async browse(input: string, index = 0, takeover = false) { const r = await this.operation({ type: 'browse', input, index, takeover }); if (!r.page) throw new CompanionError('browseReadError'); return r.page; }

@@ -131,6 +131,7 @@ export class FrameCompanion {
     throw new Error('Unsupported companion operation.');
   }
   command(command) { return this.run(() => this.controller.execute(command)); }
+  playQueue(index = 0) { return this.run(() => this.controller.playQueue(index)); }
   async sound(command) {
     const before = this.controller.state?.snapshot;
     if (command === 'mute' && typeof before?.status.mute !== 'boolean') throw new Error('Mute status unavailable. Refresh first.');

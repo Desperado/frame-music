@@ -318,3 +318,16 @@ test('shared menu pages follow navigation on the other screen without granting i
     await tv.observe(); assert.equal(tv.state.menu, undefined);
   } finally { session.disconnect(); }
 });
+
+test('TV queue reads keep phone menu ownership and a queue failure does not stale playback', async () => {
+  const f = fixture(), phone = f.client('phone'), tv = f.client('tv');
+  f.adapter.playQueue = async index => ({start: index, total: 1, playingIndex: 0, tracks: [{index: 0, title: 'Song', artist: '', album: ''}]});
+  await f.coordinator.poll(); await phone.reconcile(); await phone.browse('deezer'); await tv.read();
+  assert.equal((await tv.playQueue()).tracks[0].title, 'Song');
+  assert.equal(f.coordinator.state.menuOwner, 'phone');
+  f.adapter.playQueue = async () => { throw new BrowseError('browseUnavailable'); };
+  await assert.rejects(tv.playQueue(), e => e.code === 'browseUnavailable');
+  assert.equal(f.coordinator.state.freshness, 'fresh');
+  assert.equal(f.coordinator.state.menuOwner, 'phone');
+  assert.equal(f.writes, 0); assert.equal(f.menuWrites, 0);
+});

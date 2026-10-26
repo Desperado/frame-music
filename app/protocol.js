@@ -1,4 +1,5 @@
 // Only local MusicCast endpoints used by this app. No account/login APIs.
+import companionAPI from '../packages/musiccast/dist/index.js';
 export function privateIPv4(host) {
   if (typeof host !== 'string' || !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
   const parts = host.split('.');
@@ -19,6 +20,7 @@ const routes = {
   'main/setVolume': { volume: oneOf(['up', 'down']) },
   'main/setMute': { enable: v => typeof v === 'boolean' },
   'netusb/getPlayInfo': {},
+  'netusb/getPlayQueue': { index },
   'main/prepareInputChange': { input },
   'netusb/getListInfo': { input, index: v => index(v) && v % 8 === 0, size: v => v === 8, lang: v => v === 'en', list_id: v => v === 'main' },
   'netusb/setListControl': { list_id: v => v === 'main', type: oneOf(['select', 'play', 'return']), index, zone: v => v === 'main' },
@@ -110,6 +112,9 @@ export class MusicCast {
   }
   list(index = 0, source = 'deezer') {
     return this.request('netusb/getListInfo', { input: source, index, size: 8, lang: 'en', list_id: 'main' });
+  }
+  async playQueue(index = 0) {
+    return companionAPI.parsePlayQueue(await this.request('netusb/getPlayQueue', { index }), index);
   }
   async selectInput(source) {
     const features = await this.request('system/getFeatures');

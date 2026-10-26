@@ -102,6 +102,8 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
       if (route === 'main/setPower') remote.power = params.power;
       if (route === 'main/setInput') remote.input = params.input;
       if (route === 'netusb/getPlayInfo') data = { response_code: remote.playInfoCode || 0, input: 'deezer', playback: 'pause', ...remote.info };
+      if (route === 'netusb/getPlayQueue') data = remote.queue ? remote.queue(params.index) : { response_code: 4 };
+      if (route === 'netusb/setSearchString') remote.search?.(params, remote);
       if (route === 'netusb/setListControl') {
         if (remote.control) remote.control(params, remote);
         else if (params.type === 'select') Object.assign(remote, { layer: remote.layer + 1, menu: remote.items[params.index].text, items: [{ text: 'Track', attribute: 4 }] });
@@ -561,24 +563,29 @@ test('rebuilding Sources restores its focused action and falls back when that ac
   assert.equal(app.nodes.get('source-list').contains(app.document.activeElement), true);
 });
 
-test('Up from Now Playing without lyrics reaches the toolbar and its controls remain reachable', async () => {
+test('Up from Now Playing reaches the playlist action and then the toolbar', async () => {
   const app = await launch(); await app.connect();
   app.nodes.get('now-playing').click(); await app.settle();
   assert.equal(app.nodes.get('lyrics-controls').hidden, true);
-  app.key('ArrowUp', 38); assert.equal(app.document.activeElement, app.nodes.get('open-track'));
-  app.key('ArrowRight', 39); assert.equal(app.document.activeElement, app.nodes.get('sources'));
-  app.key('ArrowDown', 40); assert.equal(app.document.activeElement, app.nodes.get('toggle-play'));
-  app.key('ArrowUp', 38); assert.equal(app.document.activeElement, app.nodes.get('sources'));
+  app.key('ArrowUp', 38); assert.equal(app.document.activeElement.id, 'open-playlist');
+  app.key('ArrowUp', 38); assert.equal(app.document.activeElement.id, 'refresh');
+  app.key('ArrowLeft', 37); assert.equal(app.document.activeElement.id, 'sources');
+  app.key('ArrowDown', 40); assert.equal(app.document.activeElement.id, 'open-playlist');
+  app.key('ArrowDown', 40); assert.equal(app.document.activeElement.id, 'toggle-play');
+  app.key('ArrowUp', 38); assert.equal(app.document.activeElement.id, 'open-playlist');
 });
 
-test('Up reaches lyrics that become available after Now Playing opens', async () => {
+test('lyrics revealed after opening remain reachable from the new playlist action', async () => {
   const app = await launch(); await app.connect();
   app.nodes.get('now-playing').click(); await app.settle();
   assert.equal(app.nodes.get('lyrics-controls').hidden, true);
   // The asynchronous lyric lookup can reveal controls after the player receives focus.
   app.nodes.get('lyrics-controls').hidden = false;
+  app.nodes.get('lyrics-up').bounds = {x: 400, y: 550, width: 150, height: 60};
   app.key('ArrowUp', 38);
-  assert.equal(app.document.activeElement, app.nodes.get('lyrics-up'));
+  assert.equal(app.document.activeElement.id, 'open-playlist');
+  app.key('ArrowDown', 40);
+  assert.equal(app.document.activeElement.id, 'lyrics-up');
 });
 
 test('artist rooms change immediately on entry, survive Back and clear on Sources or root', async () => {
@@ -1484,4 +1491,89 @@ test('TV offers menu takeover beside Browse and follows the phone page without m
   takeover.click(); await app.settle();
   assert.equal(app.nodes.get('browse-label').textContent, 'USB');
   assert.equal(writes, 1, 'explicit takeover only reads the requested menu');
+});
+
+test('cold-start Now Playing reads the Yamaha queue without menu or playback writes', async () => {
+  const tracks = Array.from({length: 18}, (_, index) => ({track: `Queue song ${index + 1}`, artist: 'Artist', album: 'Album'}));
+  const app = await launch(undefined, {remote: {menuCode: 4, info: {track: 'Queue song 11', artist: 'Artist'},
+    queue: index => ({index, max_line: tracks.length, playing_index: 10, track_info: tracks.slice(index, index + 8)})}});
+  await app.connect(); app.nodes.get('now-playing').click(); await app.settle(); app.calls.length = 0;
+  app.nodes.get('open-playlist').click(); await app.settle();
+  assert.equal(app.nodes.get('playlist-panel').hidden, false);
+  assert.match(app.nodes.get('playlist-status').textContent, /9–16 of 18/);
+  const rows = app.nodes.get('playlist-tracks').children;
+  assert.equal(rows[2].attributes['aria-current'], 'true');
+  assert.match(rows[2].textContent, /Queue song 11.*Now playing/);
+  assert.deepEqual(app.calls.filter(c => c.route === 'netusb/getPlayQueue').map(c => c.params.index), [0, 8]);
+  assert.equal(app.calls.some(c => /getListInfo|set|prepareInputChange/.test(c.route)), false);
+  app.nodes.get('playlist-next').click(); await app.settle();
+  assert.match(app.nodes.get('playlist-status').textContent, /17–18 of 18/);
+  assert.equal(app.nodes.get('playlist-next').disabled, true);
+  app.remote.info = {track: 'Different song', artist: 'Artist'}; await app.poll();
+  assert.equal(app.nodes.get('playlist-tracks').children.length, 0);
+  assert.match(app.nodes.get('playlist-status').textContent, /Playback changed/);
+});
+
+test('unsupported queue leaves playback usable and shows an explicit unavailable state', async () => {
+  const app = await launch(); await app.connect(); app.nodes.get('now-playing').click(); await app.settle();
+  app.nodes.get('open-playlist').click(); await app.settle();
+  assert.match(app.nodes.get('playlist-status').textContent, /unavailable from Yamaha/);
+  assert.equal(app.nodes.get('toggle-play').disabled, false);
+  assert.equal(app.nodes.get('playlist-next').disabled, true);
+});
+
+test('queue paging recovers when another controller replaces it with a shorter queue', async () => {
+  let total = 20;
+  const app = await launch(undefined, {remote: {queue: index => ({index, max_line: total, playing_index: 0,
+    track_info: Array.from({length: Math.max(0, Math.min(8, total - index))}, (_, offset) => ({track: `Song ${index + offset + 1}`}))})}});
+  await app.connect(); app.nodes.get('now-playing').click(); await app.settle();
+  app.nodes.get('open-playlist').click(); await app.settle();
+  total = 2; app.nodes.get('playlist-next').click(); await app.settle();
+  assert.match(app.nodes.get('playlist-status').textContent, /1–2 of 2/);
+  assert.equal(app.nodes.get('playlist-tracks').children.length, 2);
+  assert.equal(app.nodes.get('playlist-prev').disabled, true);
+});
+
+test('an input change clears an open queue even before track metadata arrives', async () => {
+  const app = await launch(undefined, {remote: {info: {}, queue: () => ({max_line: 1, track_info: [{track: 'Queued song'}]})}});
+  await app.connect(); app.nodes.get('now-playing').click(); await app.settle();
+  app.nodes.get('open-playlist').click(); await app.settle();
+  assert.equal(app.nodes.get('playlist-tracks').children.length, 1);
+  app.remote.input = 'cd'; await app.poll();
+  assert.equal(app.nodes.get('playlist-tracks').children.length, 0);
+  assert.match(app.nodes.get('playlist-status').textContent, /Playback changed/);
+});
+
+test('artist click finds Deezer search from an unrelated cold-start menu and opens releases', async () => {
+  const artist = 'Скрябін';
+  const root = {layer: 0, menu: 'Deezer', items: [{text: 'Search', attribute: 2}]};
+  const app = await launch(undefined, {remote: {layer: 3, menu: 'Old playlist', items: [{text: 'Old song', attribute: 4}], info: {artist, track: 'Я живу'},
+    control(params, remote) {
+      if (params.type === 'return') Object.assign(remote, root);
+      else if (remote.menu === 'Deezer') Object.assign(remote, {layer: 1, menu: 'Search', items: [{text: 'Artists', attribute: 10}]});
+      else if (remote.menu === 'Artists') Object.assign(remote, {layer: 3, menu: artist, items: [{text: 'Albums', attribute: 2}, {text: 'Singles & EPs', attribute: 2}]});
+    },
+    search(params, remote) { assert.equal(params.string, artist); Object.assign(remote, {layer: 2, menu: 'Artists', items: [{text: artist, attribute: 2}, ...Array.from({length: 39}, (_, i) => ({text: `Other artist ${i}`, attribute: 2}))]}); }
+  }});
+  await app.connect(); app.nodes.get('now-playing').click(); await app.settle(); app.calls.length = 0;
+  app.nodes.get('browse-artist').click(); for (let i = 0; i < 10; i++) await app.settle();
+  assert.equal(app.nodes.get('track-panel').hidden, true);
+  assert.equal(app.nodes.get('menu-title').textContent, artist);
+  assert.match(app.nodes.get('menu').textContent, /Albums/); assert.match(app.nodes.get('menu').textContent, /Singles/);
+  assert.equal(app.calls.filter(c => c.route === 'netusb/setSearchString').length, 1);
+  assert.equal(app.calls.some(c => c.route === 'netusb/getListInfo' && c.params.index > 0), false, 'a first-page artist match does not scan the remaining results');
+  assert.equal(app.calls.some(c => /setPlayback|setInput|setPower/.test(c.route) || c.params?.type === 'play'), false);
+});
+
+test('clock and calendar follow local time and update immediately after resume', async () => {
+  const app = await launch();
+  const date = app.nodes.get('room-date'), clock = app.nodes.get('room-time');
+  assert.ok(clock.textContent.length > 3); assert.ok(date.textContent.length > 8);
+  const before = clock.attributes.datetime;
+  app.document.visibilityState = 'hidden'; app.advance(86400000); await app.poll();
+  assert.equal(clock.attributes.datetime, before);
+  app.document.visibilityState = 'visible'; app.document.onvisibilitychange();
+  const expected = new Date(Date.now() + 86400000);
+  assert.equal(date.attributes.datetime, `${expected.getFullYear()}-${String(expected.getMonth()+1).padStart(2,'0')}-${String(expected.getDate()).padStart(2,'0')}`);
+  assert.notEqual(clock.attributes.datetime, before);
 });

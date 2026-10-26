@@ -26,6 +26,10 @@ export function publicResponse(route, data, host) {
     Object.assign(result, pick(data, ['input', 'menu_layer', 'menu_name', 'index', 'max_line']));
     result.list_info = (data.list_info || []).map(v => pick(v, ['text', 'attribute']));
   }
+  if (route === 'netusb/getPlayQueue') {
+    Object.assign(result, pick(data, ['index', 'max_line', 'playing_index']));
+    if (Array.isArray(data.track_info)) result.track_info = data.track_info.slice(0, 8).map(v => pick(v, ['track', 'text', 'artist', 'album']));
+  }
   return result;
 }
 

@@ -31,6 +31,10 @@
     </div>
     <header id="appearance">
       <span class="service" id="service-label">DEEZER</span>
+      <div class="room-clock" aria-label="Local time and date">
+        <time id="room-time" class="room-time"></time>
+        <div class="room-calendar"><span id="room-weekday"></span><time id="room-date"></time></div>
+      </div>
       <div class="header-actions">
         <button id="open-themes" class="quiet theme-trigger" aria-haspopup="dialog">Appearance · <span id="theme-current">Warm Gallery</span></button>
         <span id="connection-badge" class="badge" hidden></span>
@@ -64,10 +68,17 @@
         <div class="album-art detail-art"><div class="sun"></div><div class="landscape"></div><img id="detail-cover" alt="" hidden></div>
         <div class="track-facts">
           <h2 id="detail-title">Choose something to listen to</h2>
-          <dl><dt>Artist</dt><dd id="detail-artist">—</dd><dt>Album</dt><dd id="detail-album">—</dd><dt>Playback</dt><dd id="detail-time">—</dd></dl>
+          <dl><dt>Artist</dt><dd><button id="browse-artist" class="artist-link" disabled aria-label="Browse artist on Deezer"><span id="detail-artist">—</span><span aria-hidden="true"> ↗</span></button></dd><dt>Album</dt><dd id="detail-album">—</dd><dt>Playback</dt><dd id="detail-time">—</dd></dl>
+          <button id="open-playlist" class="quiet" aria-expanded="false" aria-controls="playlist-panel">☷ Current playlist</button>
           <p id="cover-status" class="source-note"></p>
         </div>
       </div>
+      <section id="playlist-panel" class="playlist-panel" hidden aria-label="Current playlist">
+        <div class="playlist-heading"><h2>Current playlist</h2><div><button id="playlist-refresh" class="quiet">↻ Refresh playlist</button><button id="playlist-close" class="quiet">Close playlist</button></div></div>
+        <p id="playlist-status" class="source-note" role="status"></p>
+        <ol id="playlist-tracks" class="playlist-tracks"></ol>
+        <div class="playlist-pages"><button id="playlist-prev" class="quiet" disabled>← Previous tracks</button><button id="playlist-next" class="quiet" disabled>Next tracks →</button></div>
+      </section>
       <section id="tuner-panel" hidden aria-label="Radio controls"><h2>Radio</h2><p id="tuner-status" class="source-note" role="status"></p><div id="tuner-controls" class="source-actions"></div></section>
       <div class="lyrics-heading"><h2>Lyrics</h2><span id="lyrics-source" class="source-note"></span></div>
       <p id="lyrics-status" class="source-note" role="status"></p>
