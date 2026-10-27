@@ -12,10 +12,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm run build --workspace @mosaicast/musiccast",
     "build": "node scripts/build.js",
     "prestart": "npm run build",
     "start": "node scripts/server.js",
-    "test": "npm run test:shared && npm run test:tv",
+    "pretest": "npm run build --workspace @mosaicast/musiccast",
+    "test": "node --test test/*.test.js && npm run test:shared",
     "test:shared": "npm test --workspace @mosaicast/musiccast",
     "pretest:tv": "npm run build --workspace @mosaicast/musiccast",
     "test:tv": "node --test test/*.test.js",

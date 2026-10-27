@@ -1,5 +1,6 @@
 import { parsePresets, parseTuner } from './tuner';
 import { CommandRejectedError } from './command-error';
+import { parsePlayQueue, validQueueIndex } from './play-queue';
 import { parseBluetoothInfo, parseBluetoothList, parseFeatures, parseStatus, parseTrack, privateIPv4, record } from './parsers';
 import { BrowseError, canBrowseSource, parseBrowsePage, sameBrowsePage, validBrowseAction, validBrowseIndex } from './browsing';
 import type { BluetoothCommand, BluetoothState, BrowseAction, BrowsePage, BrowseResult, Command, Controller, Features, Snapshot, Status } from './types';
@@ -57,6 +58,16 @@ export class MusicCastClient implements Controller {
   }
 
   read(): Promise<Snapshot> { return this.operation(() => this.readSnapshot()); }
+
+  playQueue(index = 0) {
+    return this.operation(async () => {
+      if (!validQueueIndex(index)) throw new Error('Invalid playlist index.');
+      const features = this.features || await this.capabilities();
+      const status = parseStatus(await this.request('main/getStatus'));
+      if (status.power !== 'on' || !features.sources.some(source => source.id === status.input && source.networkPlayer)) throw new Error('Playlist unavailable for this input.');
+      return parsePlayQueue(await this.request('netusb/getPlayQueue', { index: String(index) }), index);
+    });
+  }
 
   private async readSnapshot(): Promise<Snapshot> {
     if (!this.features) {

@@ -64,10 +64,17 @@
         <div class="album-art detail-art"><div class="sun"></div><div class="landscape"></div><img id="detail-cover" alt="" hidden></div>
         <div class="track-facts">
           <h2 id="detail-title">Choose something to listen to</h2>
-          <dl><dt>Artist</dt><dd id="detail-artist">—</dd><dt>Album</dt><dd id="detail-album">—</dd><dt>Playback</dt><dd id="detail-time">—</dd></dl>
+          <dl><dt>Artist</dt><dd><button id="browse-artist" class="artist-link" disabled aria-label="Browse artist on Deezer"><span id="detail-artist">—</span><span aria-hidden="true"> ↗</span></button></dd><dt>Album</dt><dd><button id="browse-album" class="artist-link" disabled aria-label="Browse album on Deezer"><span id="detail-album">—</span><span aria-hidden="true"> ↗</span></button></dd><dt>Playback</dt><dd id="detail-time">—</dd></dl>
+          <button id="open-playlist" class="quiet" aria-expanded="false" aria-controls="playlist-panel">☷ Current playlist</button>
           <p id="cover-status" class="source-note"></p>
         </div>
       </div>
+      <section id="playlist-panel" class="playlist-panel" hidden aria-label="Current playlist">
+        <div class="playlist-heading"><h2>Current playlist</h2><div><button id="playlist-refresh" class="quiet">↻ Refresh playlist</button><button id="playlist-close" class="quiet">Close playlist</button></div></div>
+        <p id="playlist-status" class="source-note" role="status"></p>
+        <ol id="playlist-tracks" class="playlist-tracks"></ol>
+        <div class="playlist-pages"><button id="playlist-prev" class="quiet" disabled>← Previous tracks</button><button id="playlist-next" class="quiet" disabled>Next tracks →</button></div>
+      </section>
       <section id="tuner-panel" hidden aria-label="Radio controls"><h2>Radio</h2><p id="tuner-status" class="source-note" role="status"></p><div id="tuner-controls" class="source-actions"></div></section>
       <div class="lyrics-heading"><h2>Lyrics</h2><span id="lyrics-source" class="source-note"></span></div>
       <p id="lyrics-status" class="source-note" role="status"></p>
@@ -85,6 +92,10 @@
   <footer id="player" class="player">
     <div class="album-art" aria-hidden="true"><div class="sun"></div><div class="landscape"></div><img id="player-cover" alt="" hidden></div>
     <div class="track"><span id="play-source" class="eyebrow">EXAMPLE MUSIC</span><strong id="track-title">A slower kind of Sunday</strong><span id="track-artist">The Quiet Hours</span></div>
+    <div class="room-clock" aria-label="Local time and date">
+      <time id="room-time" class="room-time"></time>
+      <div class="room-calendar"><span id="room-weekday"></span><time id="room-date"></time></div>
+    </div>
     <div class="transport"><button id="previous" aria-label="Previous track">Ⅰ◀</button><button id="toggle-play" class="play" aria-label="Play or pause">▶</button><button id="next" aria-label="Next track">▶Ⅰ</button></div>
     <div class="sound" role="group" aria-label="Yamaha sound controls">
       <span id="volume-level">Volume unavailable</span>

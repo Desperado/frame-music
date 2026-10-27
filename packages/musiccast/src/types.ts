@@ -88,6 +88,14 @@ export interface Controller {
   execute(command: Command): Promise<Snapshot>;
   browse(input: string, index?: number, takeover?: boolean): Promise<BrowsePage>;
   browseAction(action: BrowseAction): Promise<BrowseResult>;
+  playQueue?(index?: number): Promise<PlayQueue>;
+}
+
+export interface PlayQueue {
+  start: number;
+  total: number;
+  playingIndex: number | null;
+  tracks: { index: number; title: string; artist: string; album: string }[];
 }
 
 export interface BrowseItem {

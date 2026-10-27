@@ -241,7 +241,8 @@
 @media(min-width:1400px){
   [data-designed=true] main[data-view=track]{display:grid;grid-template-columns:minmax(0,1fr);align-content:start}
   [data-designed=true] #track-panel{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);column-gap:2rem;align-items:start}
-  [data-designed=true] .track-overview{grid-row:1 / span 5;display:flex;flex-direction:column;align-items:flex-start;margin:0;gap:1rem}
+  [data-designed=true] .track-overview{grid-row:1 / span 6;display:flex;flex-direction:column;align-items:flex-start;margin:0;gap:1rem}
+  [data-designed=true] #track-panel>:not(.track-overview){grid-column:2}
   [data-designed=true] .track-overview .detail-art{width:15rem;height:15rem}
   [data-designed=true] .track-facts h2{font-size:1.55rem;margin-bottom:.5rem}
   [data-designed=true] .track-facts dl{font-size:.9rem}
@@ -381,3 +382,30 @@ html[data-surface=clear] #main-content .quiet{background:#10192373}
 .help-sections p{color:var(--muted)}
 .overlay .dialog{max-height:90vh;overflow:auto}
 .overlay.help-overlay .dialog{width:42rem}
+
+/* The scroll viewport ends above the player so the last song and its focus ring
+   can never sit underneath it. Reserve the floating player's bottom gap too. */
+:root{--player-space:6.9rem}
+:root[data-designed=true]{--player-space:6.3rem}
+:root[data-style=warm-gallery]{--player-space:8.3rem}
+body{padding-bottom:var(--player-space)}
+body main,[data-designed=true] main{min-height:0;padding-bottom:1.4rem;scroll-padding:1rem}
+.player .track{flex:1;min-width:5rem}
+.player .room-clock{margin:0 1rem;gap:.8rem}
+.player .transport{flex:none}
+@media(max-width:1200px){
+  .player .room-clock{margin:0;gap:.6rem}
+  .player .room-time{font-size:2rem}
+  .player .room-calendar{font-size:.75rem;padding-left:.6rem}
+}
+@media(max-width:700px){
+  :root,:root[data-designed=true],:root[data-style=warm-gallery]{--player-space:10rem}
+  body main,[data-designed=true] main{height:calc(100vh - var(--player-space))}
+  [data-navigation=top] main{height:calc(100vh - var(--player-space) - 3.5rem)}
+  body .player,[data-designed=true] .player{height:var(--player-space);align-content:center}
+  .player .room-clock{order:3;flex:1;gap:.5rem}
+  .player .room-time{font-size:1.65rem}
+  .player .room-calendar{font-size:.65rem;padding-left:.5rem}
+  .player .sound,[data-designed=true] .player .sound{width:auto;display:block}
+  .player .sound>span{margin-bottom:.3rem}
+}

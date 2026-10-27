@@ -1,4 +1,6 @@
 export { MusicCastClient } from './client';
+export { parsePlayQueue, validQueueIndex } from './play-queue';
+export type { PlayQueue } from './types';
 export { CommandRejectedError } from './command-error';
 export { demoController } from './demo';
 export { privateIPv4 } from './parsers';

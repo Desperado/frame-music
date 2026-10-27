@@ -127,3 +127,9 @@ test('theme assets load locally without exposing other files or contacting the Y
   }
   assert.equal(calls, 0);
 });
+
+test('queue proxy forwards display metadata and strips unrelated identifiers', () => {
+  assert.deepEqual(publicResponse('netusb/getPlayQueue', {response_code: 0, max_line: 1, playing_index: 0, track_info: [
+    {track: 'Song', artist: 'Artist', album: 'Album', service_id: 'omit', url: 'omit'}
+  ], unknown: 'omit'}), {response_code: 0, max_line: 1, playing_index: 0, track_info: [{track: 'Song', artist: 'Artist', album: 'Album'}]});
+});
