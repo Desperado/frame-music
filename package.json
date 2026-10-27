@@ -16,7 +16,7 @@
     "build": "node scripts/build.js",
     "prestart": "npm run build",
     "start": "node scripts/server.js",
-    "test": "npm run test:shared && npm run test:tv",
+    "test": "npm run test:shared && node --test test/*.test.js",
     "test:shared": "npm test --workspace @mosaicast/musiccast",
     "pretest:tv": "npm run build --workspace @mosaicast/musiccast",
     "test:tv": "node --test test/*.test.js",
