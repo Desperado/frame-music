@@ -45,7 +45,7 @@ main{scroll-padding:1rem 1rem 2rem}
 #room-weekday{font-weight:600}#room-date{color:var(--player-muted,var(--muted))}
 #appearance{gap:1rem}
 .artist-link{font:inherit;color:var(--green);border:0;border-bottom:1px solid currentColor;background:transparent;border-radius:.15rem;padding:0 .15rem;text-align:left;cursor:pointer;overflow-wrap:anywhere}
-.artist-link:disabled{color:inherit;border-color:transparent;cursor:default}.artist-link:disabled>span[aria-hidden]{display:none}
+.artist-link:disabled{color:inherit;border-color:transparent;cursor:default;opacity:1}.artist-link:disabled>span[aria-hidden]{display:none}
 .playlist-panel{border:1px solid var(--line);border-radius:.65rem;background:var(--paper);padding:1rem;margin:0 0 1.5rem}
 .playlist-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.65rem;margin-bottom:.65rem}.playlist-heading h2{font-size:1.3rem;margin:0;flex:none}.playlist-heading>div,.playlist-pages{display:flex;flex-wrap:wrap;gap:.5rem}.playlist-heading>div{flex:none;max-width:100%}
 .playlist-tracks{list-style:none;padding:0;margin:0 0 1rem}.playlist-tracks li{display:flex;gap:1rem;align-items:center;padding:.75rem;border-bottom:1px solid var(--line);font-size:.85rem}

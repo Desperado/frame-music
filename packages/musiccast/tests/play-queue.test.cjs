@@ -20,6 +20,15 @@ test('large queues and long metadata remain small enough for encrypted companion
   assert.ok(Buffer.byteLength(JSON.stringify(queue)) < 100000);
 });
 
+test('unknown or invalid playing positions keep the queue readable without a false highlight', () => {
+  for (const playing_index of [undefined, null, -1, 1.5, '0', 5, 99, 65000]) {
+    const queue = parsePlayQueue({max_line: 5, playing_index, track_info: [{track: 'Song'}]});
+    assert.equal(queue.playingIndex, null);
+    assert.equal(queue.total, 5);
+    assert.deepEqual(queue.tracks, [{index: 0, title: 'Song', artist: '', album: ''}]);
+  }
+});
+
 test('queue reads work without browse history and reject standby or non-network inputs', async () => {
   const calls = []; let power = 'on', input = 'deezer';
   const client = new MusicCastClient('192.168.1.20', async value => {

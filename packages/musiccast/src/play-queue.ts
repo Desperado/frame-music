@@ -19,5 +19,6 @@ export function parsePlayQueue(value: unknown, start = 0): PlayQueue {
     return { index: start + offset, title: text(item.track) || text(item.text) || 'Untitled track', artist: text(item.artist), album: text(item.album) };
   });
   if (total > start && !tracks.length) throw new Error('Playlist unavailable.');
+  // An unknown current position must not hide an otherwise readable queue.
   return { start, total, playingIndex: validQueueIndex(data.playing_index) && data.playing_index < total ? data.playing_index : null, tracks };
 }
