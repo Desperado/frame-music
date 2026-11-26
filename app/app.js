@@ -632,7 +632,7 @@ function savedHost() {
 }
 
 async function connect(host, demo = false, pairing, newlyPaired = false) {
-  const candidate = pairing ? new FrameCompanion(pairing) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
+  const candidate = pairing ? new FrameCompanion(pairing, input => { if (client === candidate) phoneRemoteInput(input); }) : new MusicCast(demo ? '10.0.0.1' : host, demo ? demoTransport() : transport);
   connectingClient = candidate;
   candidate.setActive?.(document.visibilityState === 'visible');
   try {
@@ -919,6 +919,18 @@ function moveFocus(dx, dy) {
   const next = available[available.indexOf(zone) + dy];
   if (next) focusZone(next, dy < 0);
   else if (dy > 0) { playerOrigin = zone; rememberView(); focusZone('player'); }
+}
+
+// The paired phone shares the TV's focus model and existing action guards.
+// Each gesture is one step; no key hold, queued clicks or synthetic DOM events.
+function phoneRemoteInput(input) {
+  if (document.visibilityState !== 'visible') return;
+  clearHeldArrow(); pressedArrow = undefined;
+  const direction = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[input];
+  if (direction) { moveFocus(...direction); return; }
+  if (input === 'back') { back(); return; }
+  const focused = document.activeElement;
+  if (input === 'select' && focused?.tagName === 'BUTTON' && visibleControls().includes(focused)) focused.click();
 }
 
 function clearHeldArrow() {

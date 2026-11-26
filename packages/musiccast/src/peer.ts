@@ -23,12 +23,17 @@ export function createPeerInvitation(random: PeerRandom, receiver?: string, now 
   return { invitation, text: 'mosaicast://pair/' + encodeURIComponent(JSON.stringify(invitation)) };
 }
 type Pending = ReturnType<typeof peerKeyPair> & { id: string; commit: string; expires: number; key?: string; approved: boolean; qr?: boolean };
+export type TVInput = 'up' | 'down' | 'left' | 'right' | 'select' | 'back';
+const validTVInput = (value: unknown): value is TVInput => typeof value === 'string' && ['up', 'down', 'left', 'right', 'select', 'back'].includes(value);
+type PeerConnection = CompanionExchange & { readInput?: () => Promise<TVInput | undefined> };
 export class PhonePeerService {
   readonly epoch: string;
   private pending?: Pending;
   private invitation?: PeerInvitation;
   private record?: PeerRecord;
-  private session?: { epoch: string; counter: number };
+  private session?: { epoch: string; counter: number; inputCounter: number };
+  private inputWaiter?: (input?: TVInput) => void;
+  private inputSeen = -Infinity;
   private granted: boolean;
   private attempts = 0;
   private attemptWindow = 0;
@@ -50,10 +55,16 @@ export class PhonePeerService {
     return p?.key && p.expires > this.now() ? { ...(p.qr ? { qr: true } : { comparison: peerSAS(p.key) }), approved: p.approved } : undefined;
   }
   get paired() { return !!this.record; }
+  get remoteReady() { return this.tvConnected && this.now() - this.inputSeen < 12000; }
+  // Deliver only to a live TV read. Never queue or replay navigation after reconnect.
+  sendInput(input: TVInput): boolean {
+    if (!validTVInput(input) || !this.remoteReady || !this.inputWaiter) return false;
+    this.inputWaiter(input); return true;
+  }
   get tvConnected() { return !!this.record && !!this.session && this.canControl && !this.explicit && this.now() < this.leaseUntil; }
   get waitingForTV() { return !this.canControl; }
   get canControl() {
-    if (this.granted && this.record && !this.explicit && this.now() >= this.leaseUntil) { this.granted = false; this.session = undefined; this.coordinator.invalidate(); }
+    if (this.granted && this.record && !this.explicit && this.now() >= this.leaseUntil) { this.granted = false; this.session = undefined; this.inputWaiter?.(); this.coordinator.invalidate(); }
     return this.active && this.granted;
   }
   approve() { const p = this.pending; if (!p?.key || p.expires <= this.now()) throw new Error('Pairing expired'); p.approved = true; }
@@ -63,10 +74,10 @@ export class PhonePeerService {
     this.cancelPairing(); this.invitation = { ...invitation, expires: Math.min(invitation.expires, this.now() + 300000) };
   }
   cancelPairing() { this.pending?.secret.fill(0); this.pending = undefined; this.invitation = undefined; }
-  close() { this.active = false; this.cancelPairing(); this.session = undefined; this.granted = false; }
+  close() { this.active = false; this.cancelPairing(); this.session = undefined; this.inputWaiter?.(); this.granted = false; }
   // Explicit user takeover is required when a paired TV cannot acknowledge yielding.
   // A partition cannot be distinguished from the TV being off without a third arbiter.
-  takeControl() { if (!this.active) throw new Error('Inactive'); this.coordinator.invalidate(); this.granted = true; this.explicit = true; }
+  takeControl() { if (!this.active) throw new Error('Inactive'); this.inputWaiter?.(); this.inputSeen = -Infinity; this.coordinator.invalidate(); this.granted = true; this.explicit = true; }
   localExchange: CompanionExchange = async request => {
     if (!this.active) throw new Error('Inactive');
     if (request && !this.canControl && request.operation.type !== 'observe') return { sequence: request.sequence, outcome: 'rejected', code: 'offline', state: { ...this.coordinator.state, freshness: 'stale', needsReconcile: true } };
@@ -125,16 +136,28 @@ export class PhonePeerService {
     }
     const packet = body as PeerPacket, record = this.record;
     if (!record || packet?.id !== record.id) throw new Error('Unpaired');
-    const clear = openPeer(record.key, packet, 'request') as { yield?: unknown; request?: CompanionRequest };
+    const clear = openPeer(record.key, packet, 'request') as { yield?: unknown; request?: CompanionRequest; remoteInput?: unknown };
     if (path === '/peer/session') {
       if (packet.epoch !== this.epoch || packet.counter !== 1 || this.sessionNonces.has(packet.nonce) || this.sessionNonces.size >= 4096) throw new Error('Invalid session');
       void this.canControl; // Expire the previous lease before installing a new session.
       this.sessionNonces.add(packet.nonce);
-      this.session = { epoch: peerRandomHex(this.random, 16), counter: 0 };
-      return sealPeer(record.key, packet, { session: this.session.epoch }, this.random, 'response');
+      this.inputWaiter?.(); this.inputSeen = -Infinity;
+      this.session = { epoch: peerRandomHex(this.random, 16), counter: 0, inputCounter: 0 };
+      return sealPeer(record.key, packet, { session: this.session.epoch, remoteInput: true }, this.random, 'response');
     }
     const session = this.session;
-    if (path !== '/peer/exchange' || !session || packet.epoch !== session.epoch || packet.counter <= session.counter) throw new Error('Invalid session');
+    if (path === '/peer/remote-input') {
+      if (!session || packet.epoch !== session.epoch || packet.counter <= session.inputCounter || clear?.remoteInput !== true || clear.request || clear.yield || this.inputWaiter || !this.tvConnected) throw new Error('Invalid remote input');
+      session.inputCounter = packet.counter; this.inputSeen = this.now();
+      const input = await new Promise<TVInput | undefined>(resolve => {
+        const timer = setTimeout(() => finish(), 10000);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        const finish = (value?: TVInput) => { clearTimeout(timer); this.inputWaiter = undefined; resolve(value); };
+        this.inputWaiter = finish;
+      });
+      return sealPeer(record.key, packet, { remoteInput: true, ...(this.session === session && this.tvConnected && input ? { input } : {}) }, this.random, 'response');
+    }
+    if (path !== '/peer/exchange' || clear?.remoteInput !== undefined || !session || packet.epoch !== session.epoch || packet.counter <= session.counter) throw new Error('Invalid session');
     session.counter = packet.counter;
     // Check the old lease before renewal; a late heartbeat cannot revive authority.
     const hadAuthority = this.canControl;
@@ -193,16 +216,16 @@ export async function beginQRPairing(url: string, invitation: PeerInvitation, ra
   if (!validPeer(record)) throw new Error('Invalid pairing');
   return { record, confirm: () => confirmPeerPairing(record, info.epoch, random, fetcher) };
 }
-export async function connectPeer(record: PeerRecord, random: PeerRandom, fetcher: typeof fetch = (...args) => globalThis.fetch(...args)): Promise<CompanionExchange> {
+export async function connectPeer(record: PeerRecord, random: PeerRandom, fetcher: typeof fetch = (...args) => globalThis.fetch(...args)): Promise<PeerConnection> {
   if (!validPeer(record)) throw new Error('Invalid pairing');
   const info = await peerJSON(record.url, '/.well-known/mosaicast-peer', undefined, fetcher, 1500) as { epoch: string };
   const packet = sealPeer(record.key, { id: record.id, epoch: info.epoch, counter: 1 }, {}, random, 'request');
   const response = await peerJSON(record.url, '/peer/session', packet, fetcher, 2000) as PeerPacket;
   if (response.id !== packet.id || response.epoch !== packet.epoch || response.counter !== packet.counter) throw new Error('Invalid session');
-  const { session } = openPeer(record.key, response, 'response') as { session: string };
+  const { session, remoteInput } = openPeer(record.key, response, 'response') as { session: string; remoteInput?: boolean };
   if (!/^[a-f0-9]{32}$/.test(session)) throw new Error('Invalid session');
   let counter = 0, yielded = false;
-  return async request => {
+  const exchange: PeerConnection = async request => {
     const sequence = ++counter;
     const envelope = sealPeer(record.key, { id: record.id, epoch: session, counter: sequence }, { ...(yielded ? {} : { yield: true }), ...(request ? { request } : {}) }, random, 'request');
     // A menu action may chain two 35s menu reads with other Yamaha requests (~100s);
@@ -214,4 +237,14 @@ export async function connectPeer(record: PeerRecord, random: PeerRandom, fetche
     if (!value?.state || value.state.version !== 1 || !['observed', 'accepted', 'rejected', 'uncertain'].includes(value.outcome)) throw new Error('Invalid response');
     yielded = true; return value;
   };
+  let inputCounter = 0;
+  if (remoteInput === true) exchange.readInput = async () => {
+    const envelope = sealPeer(record.key, { id: record.id, epoch: session, counter: ++inputCounter }, { remoteInput: true }, random, 'request');
+    const reply = await peerJSON(record.url, '/peer/remote-input', envelope, fetcher, 12000) as PeerPacket;
+    if (reply.id !== envelope.id || reply.epoch !== session || reply.counter !== envelope.counter) throw new Error('Invalid remote response');
+    const value = openPeer(record.key, reply, 'response') as { remoteInput?: unknown; input?: unknown };
+    if (value?.remoteInput !== true || (value.input !== undefined && !validTVInput(value.input))) throw new Error('Invalid remote response');
+    return value.input as TVInput | undefined;
+  };
+  return exchange;
 }

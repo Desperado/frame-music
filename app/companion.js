@@ -98,10 +98,10 @@ export function companionMessage(error) {
 
 // Semantic bridge for the existing TV presentation. No raw Yamaha requests leave this adapter.
 export class FrameCompanion {
-  constructor(pairing) {
+  constructor(pairing, onInput) {
     this.host = pairing.receiver;
     this.urls = [];
-    this.controller = companionAPI.createTVPeerController(pairing, peerRandom, () => this.urls);
+    this.controller = companionAPI.createTVPeerController(pairing, peerRandom, () => this.urls, undefined, undefined, onInput);
     this.active = true;
     this.searchTimer = setInterval(() => this.discover(), 30000);
     this.searchTimer?.unref?.();

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
 const { CompanionCoordinator, CompanionController, PhonePeerService, createPeerInvitation, readPeerInvitation, beginQRPairing, beginPeerPairing, connectPeer, createTVPeerController, peerDeviceFetch, MusicCastClient } = require('../dist');
-const { peerCommit, peerKeyPair, openPeer } = require('../dist/peer-crypto');
+const { peerCommit, peerKeyPair, openPeer, sealPeer } = require('../dist/peer-crypto');
 const random = n => new Uint8Array(randomBytes(n));
 const receiver = '192.168.1.20', url = 'http://192.168.1.10:8095';
 const volume = { type: 'volume', value: 'up' };
@@ -23,6 +23,75 @@ function fixture() {
   return { service, coordinator, adapter, fetcher, packets, snapshot, get writes() { return writes; }, get persisted() { return persisted; }, get persistCount() { return persistCount; }, set failPersist(v) { failPersist = v; }, set online(v) { online = v; }, set gate(v) { gate = v; }, advance(n) { time += n; }, now: () => time };
 }
 async function paired(f) { const pairing = await beginPeerPairing(url, random, f.fetcher); assert.ok(pairing.comparison === f.service.pairing.comparison); f.service.approve(); return pairing.confirm(); }
+
+test('touchpad delivers once to a live TV poll, never queues input or renews Yamaha authority', async t => {
+  const f = fixture(), record = await paired(f), connection = await connectPeer(record, random, f.fetcher);
+  t.after(() => f.service.close());
+  assert.equal(f.service.sendInput('select'), false);
+  await connection();
+  assert.equal(f.service.remoteReady, false);
+  const input = connection.readInput(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.service.remoteReady, true);
+  assert.equal(f.service.sendInput('right'), true);
+  assert.equal(f.service.sendInput('select'), false, 'no waiter means no deferred click');
+  assert.equal(await input, 'right');
+  const packet = f.packets.find(p => p.path === '/peer/remote-input').body;
+  await assert.rejects(f.service.handle('POST', '/peer/remote-input', packet), /Invalid remote/);
+  await assert.rejects(f.service.handle('POST', '/peer/exchange', packet), /Invalid session/);
+  const ordinary = f.packets.find(p => p.path === '/peer/exchange').body;
+  await assert.rejects(f.service.handle('POST', '/peer/remote-input', ordinary), /Invalid remote/);
+  const waiting = connection.readInput(); await new Promise(resolve => setImmediate(resolve));
+  f.advance(12001);
+  assert.equal(f.service.sendInput('select'), false);
+  assert.equal(await waiting, undefined);
+  assert.equal(f.service.canControl, false, 'input reads do not renew the receiver lease');
+  assert.equal(f.writes, 0);
+});
+
+test('new sessions, background and explicit takeover discard pending touchpad input', async () => {
+  for (const retire of ['session', 'close', 'takeover']) {
+    const f = fixture(), record = await paired(f), connection = await connectPeer(record, random, f.fetcher);
+    await connection();
+    const waiting = connection.readInput(); await new Promise(resolve => setImmediate(resolve));
+    if (retire === 'session') await connectPeer(record, random, f.fetcher);
+    else if (retire === 'close') f.service.close();
+    else f.service.takeControl();
+    assert.equal(await waiting, undefined);
+    assert.equal(f.service.sendInput('select'), false);
+    f.service.close();
+  }
+});
+
+test('touchpad rejects unsigned reads, overlapping polls and response substitution', async t => {
+  const f = fixture(), record = await paired(f), connection = await connectPeer(record, random, f.fetcher);
+  t.after(() => f.service.close()); await connection();
+  await assert.rejects(f.service.handle('POST', '/peer/remote-input', {remoteInput: true}));
+  const waiting = connection.readInput(); await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(connection.readInput(), /Invalid remote/);
+  assert.equal(f.service.sendInput('up'), true); assert.equal(await waiting, 'up');
+  const wrong = await connectPeer(record, random, async (address, options) => {
+    if (new URL(address).pathname !== '/peer/remote-input') return f.fetcher(address, options);
+    const request = JSON.parse(options.body);
+    return {ok: true, text: async () => JSON.stringify(sealPeer(record.key, request, {remoteInput: true, input: 'arbitrary-route'}, random, 'response'))};
+  });
+  await assert.rejects(wrong.readInput(), /Invalid remote response/);
+});
+
+test('TV drops an input response after backgrounding even if it was already sent', async t => {
+  const f = fixture(), record = await paired(f), received = [];
+  const gate = Promise.withResolvers(); let held;
+  const fetcher = async (address, options) => {
+    const response = await f.fetcher(address, options);
+    if (new URL(address).pathname === '/peer/remote-input') { held = true; await gate.promise; }
+    return response;
+  };
+  const tv = createTVPeerController(record, random, () => [], fetcher, f.now, input => received.push(input));
+  t.after(() => {tv.close(); f.service.close(); gate.resolve();});
+  await tv.read(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.service.sendInput('select'), true); await new Promise(resolve => setImmediate(resolve)); assert.ok(held);
+  tv.setActive(false); gate.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(received, []); assert.equal(f.writes, 0);
+});
 
 test('pairing requires matching comparison and approval on phone, and secure persistence', async () => {
   const f = fixture();

@@ -1,6 +1,6 @@
 import { MusicCastClient } from './client';
 import { CompanionController, CompanionCoordinator, type CompanionExchange } from './companion';
-import { connectPeer } from './peer';
+import { connectPeer, type TVInput } from './peer';
 import { peerRandomHex, type PeerRandom, type PeerRecord } from './peer-crypto';
 
 // Fence at dispatch, including writes issued after an awaited Yamaha preflight.
@@ -16,13 +16,25 @@ export function peerDeviceFetch(allowed: () => boolean, fetcher: typeof fetch = 
 // One phone and one TV on a home LAN. The TV drains its operation before yielding.
 // After losing the phone, it waits for the 12s phone lease plus in-flight HTTP
 // work (5s write timeout and delayed reads) before permitting local reconciliation.
-export function createTVPeerController(record: PeerRecord, random: PeerRandom, urls: () => string[], fetcher: typeof fetch = (...args) => globalThis.fetch(...args), now = Date.now) {
+export function createTVPeerController(record: PeerRecord, random: PeerRandom, urls: () => string[], fetcher: typeof fetch = (...args) => globalThis.fetch(...args), now = Date.now, onInput?: (input: TVInput) => void) {
   let active = true, closed = false, remote: CompanionExchange | undefined;
   let nextProbe = 0, recoverAt = now() + 60000, probing = false;
   const device = new MusicCastClient(record.receiver, peerDeviceFetch(() => active && !closed && !remote && !probing && now() >= recoverAt, fetcher));
   const coordinator = () => new CompanionCoordinator(device, peerRandomHex(random, 16));
   let local = coordinator();
   let nextPoll = 0;
+  async function readInputs(connection: Awaited<ReturnType<typeof connectPeer>>) {
+    if (!onInput || !connection.readInput) return;
+    while (active && !closed && remote === connection) {
+      try {
+        const input = await connection.readInput();
+        if (input && active && !closed && remote === connection) onInput(input);
+      } catch {
+        // Retry only this observation channel, never an input or a Yamaha write.
+        if (active && !closed && remote === connection) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
   const exchange: CompanionExchange = async request => {
     if (!active || closed) throw new Error('Inactive');
     // CompanionController waits for its observation before a command, so this
@@ -38,7 +50,7 @@ export function createTVPeerController(record: PeerRecord, random: PeerRandom, u
             // require an explicit Refresh because the phone may have written meanwhile.
             recoverAt = now() + 60000; local.invalidate();
             const observed = await candidate();
-            remote = candidate; return observed;
+            remote = candidate; void readInputs(candidate); return observed;
           } catch { if (!active || closed) throw new Error('Inactive'); }
         }
       } finally { probing = false; }

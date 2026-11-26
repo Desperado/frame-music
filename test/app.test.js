@@ -137,6 +137,34 @@ async function launch(tizen, { storage = new Map(), storageUnavailable = false, 
   return { nodes, document, remote, calls, storage, key, settle, connect, poll, advance };
 }
 
+test('paired phone touchpad moves TV focus, selects existing controls and stops when TV is hidden', async t => {
+  const snapshot = {model: 'Touchpad fixture', features: {controls: [], sources: [{id: 'deezer', name: 'Deezer', networkPlayer: true}], connectivity: []}, status: {power: 'on', input: 'deezer'}, trackUnavailable: false};
+  const coordinator = new shared.CompanionCoordinator({read: async () => snapshot, execute: async () => snapshot}, 'touchpad-fixture');
+  const pairing = {url: 'http://192.168.1.10:8095', receiver: '192.168.1.20', id: randomBytes(16).toString('hex'), key: randomBytes(32).toString('hex')};
+  const service = new shared.PhonePeerService(pairing.receiver, pairing.url, coordinator, n => new Uint8Array(randomBytes(n)), pairing, async () => {});
+  const app = await launch({keymanager: {getData: () => JSON.stringify(pairing)}}, {
+    storage: new Map([['mosaicast-mode', 'companion']]), companionFetch: async (url, options = {}) => {
+      const value = await service.handle(options.method || 'GET', new URL(url).pathname, options.body ? JSON.parse(options.body) : undefined);
+      return {ok: true, text: async () => JSON.stringify(value)};
+    }
+  });
+  t.after(() => {app.document.visibilityState = 'hidden'; app.document.onvisibilitychange(); service.close();});
+  app.nodes.get('now-playing').focus();
+  assert.equal(service.remoteReady, true);
+  assert.equal(service.sendInput('down'), true); await app.settle();
+  assert.equal(app.document.activeElement.id, 'browse-sources');
+  app.nodes.get('now-playing').focus();
+  assert.equal(service.sendInput('select'), true); await app.settle();
+  assert.equal(app.nodes.get('track-panel').hidden, false);
+  assert.equal(service.sendInput('back'), true); await app.settle();
+  assert.equal(app.nodes.get('sources-panel').hidden, false);
+  assert.equal(app.calls.length, 0, 'remote navigation never makes direct Yamaha requests');
+  const focused = app.document.activeElement;
+  app.document.visibilityState = 'hidden'; app.document.onvisibilitychange();
+  service.sendInput('down'); await app.settle();
+  assert.equal(app.document.activeElement, focused);
+});
+
 test('launch reconnects to the last successful device after restart without power, input or playback writes', async () => {
   const first = await launch(); await first.connect();
   assert.equal(first.storage.get('yamaha-host'), '192.168.1.20');
@@ -1241,7 +1269,13 @@ test('a companion menu stall leaves Now Playing and themes usable and cannot ste
   gate = Promise.withResolvers();
   app.nodes.get('menu').children[0].click(); await app.settle();
   assert.equal(app.nodes.get('menu').getAttribute('aria-busy'), 'true');
-  app.nodes.get('now-playing').click();
+  app.nodes.get('now-playing').focus();
+  assert.equal(phone.sendInput('select'), true); await app.settle();
+  assert.equal(app.nodes.get('track-panel').hidden, false);
+  assert.equal(phone.sendInput('back'), true); await app.settle();
+  assert.equal(app.nodes.get('track-panel').hidden, true);
+  app.nodes.get('now-playing').focus();
+  assert.equal(phone.sendInput('select'), true); await app.settle();
   assert.equal(app.nodes.get('track-panel').hidden, false);
   app.nodes.get('open-themes').click(); app.nodes.get('theme-record-store').click();
   const focus = app.document.activeElement;

@@ -16,4 +16,4 @@ export { discoverPeers } from './discovery';
 export type { PeerRecord, PeerRandom } from './peer-crypto';
 export { createTVPeerController, peerDeviceFetch } from './peer-controller';
 
-export type { PeerInvitation } from './peer';
+export type { PeerInvitation, TVInput } from './peer';
